@@ -14,6 +14,10 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
+    kotlinOptions {
+        jvmTarget = "17"
+    }
+
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
         applicationId = "com.example.flutter_facetec_sample_app_kotlin"
@@ -38,6 +42,11 @@ kotlin {
     compilerOptions {
         jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
     }
+}
+
+// JVM Toolchain to ensure consistent Java/Kotlin compilation target
+javaToolchain {
+    languageVersion = JavaLanguageVersion.of(17)
 }
 
 flutter {
