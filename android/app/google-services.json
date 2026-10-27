@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1012907883978",
+    "project_id": "attendai-ec4cd",
+    "storage_bucket": "attendai-ec4cd.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1012907883978:android:d0deb0a24c05bdff6f2333",
+        "android_client_info": {
+          "package_name": "com.attendai.samtechcomputers"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD6jo7MN2LAMkAzlSbgRZPZDNp4_I31H1Q"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

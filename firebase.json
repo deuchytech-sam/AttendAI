@@ -1,0 +1,45 @@
+{
+  "functions": [
+    {
+      "source": "functions",
+      "codebase": "default"
+    }
+  ],
+  "firestore": {
+    "rules": "firestore.rules"
+  },
+  "hosting": {
+    "public": "build/web",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "rewrites": [
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ]
+  },
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "attendai-ec4cd",
+          "appId": "1:1012907883978:android:d0deb0a24c05bdff6f2333",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "attendai-ec4cd",
+          "configurations": {
+            "android": "1:1012907883978:android:d0deb0a24c05bdff6f2333",
+            "ios": "1:1012907883978:ios:a2e15e3c40b14d1a6f2333"
+          }
+        }
+      }
+    }
+  }
+}

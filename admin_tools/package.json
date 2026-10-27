@@ -1,0 +1,11 @@
+{
+  "name": "attendai-admin-tools",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "promote-admin": "node set_university_admin.mjs"
+  },
+  "dependencies": {
+    "firebase-admin": "^13.0.0"
+  }
+}

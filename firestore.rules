@@ -1,0 +1,175 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function memberPath(universityId) {
+      return /databases/$(database)/documents/universities/$(universityId)/members/$(request.auth.uid);
+    }
+
+    function isMember(universityId) {
+      return signedIn()
+        && exists(memberPath(universityId))
+        && get(memberPath(universityId)).data.status == 'active';
+    }
+
+    function hasRole(universityId, role) {
+      return isMember(universityId)
+        && get(memberPath(universityId)).data.role == role;
+    }
+
+    function isUniversityAdmin(universityId) {
+      return hasRole(universityId, 'admin');
+    }
+
+    match /users/{uid} {
+      allow get: if signedIn()
+        && (request.auth.uid == uid
+          || (resource.data.universityId is string
+            && isUniversityAdmin(resource.data.universityId)));
+      allow list: if signedIn()
+        && resource.data.universityId is string
+        && hasRole(resource.data.universityId, 'admin');
+      allow create: if signedIn()
+        && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly([
+          'uid', 'email', 'displayName', 'universityId',
+          'requestedRole', 'matricNumber', 'status', 'createdAt'
+        ])
+        && request.resource.data.keys().hasAll([
+          'uid', 'email', 'displayName', 'universityId',
+          'requestedRole', 'status', 'createdAt'
+        ])
+        && request.resource.data.uid == uid
+        && request.resource.data.email == request.auth.token.email
+        && request.resource.data.displayName is string
+        && request.resource.data.displayName.size() > 0
+        && request.resource.data.universityId is string
+        && request.resource.data.universityId.size() > 0
+        && request.resource.data.requestedRole in ['lecturer', 'student']
+        && request.resource.data.status == 'pending'
+        && request.resource.data.createdAt == request.time
+        && (!request.resource.data.keys().hasAny(['matricNumber'])
+          || request.resource.data.matricNumber == null
+          || request.resource.data.matricNumber is string);
+      allow update: if signedIn()
+        && resource.data.universityId is string
+        && isUniversityAdmin(resource.data.universityId)
+        && resource.data.status == 'pending'
+        && request.resource.data.status == 'approved'
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['status'])
+        && existsAfter(/databases/$(database)/documents/universities/$(resource.data.universityId)/members/$(uid))
+        && getAfter(/databases/$(database)/documents/universities/$(resource.data.universityId)/members/$(uid)).data.status == 'active'
+        && getAfter(/databases/$(database)/documents/universities/$(resource.data.universityId)/members/$(uid)).data.role == resource.data.requestedRole;
+      allow delete: if false;
+    }
+
+    match /universities/{universityId} {
+      allow read: if isMember(universityId);
+      allow write: if false;
+
+      match /members/{uid} {
+        allow read: if hasRole(universityId, 'lecturer')
+          || isUniversityAdmin(universityId)
+          || (signedIn() && request.auth.uid == uid);
+        allow create: if isUniversityAdmin(universityId)
+          && request.resource.data.keys().hasOnly([
+            'status', 'role', 'courseIds', 'approvedBy', 'approvedAt'
+          ])
+          && request.resource.data.keys().hasAll([
+            'status', 'role', 'courseIds', 'approvedBy', 'approvedAt'
+          ])
+          && request.resource.data.status == 'active'
+          && request.resource.data.role in ['student', 'lecturer']
+          && request.resource.data.approvedBy == request.auth.uid
+          && request.resource.data.approvedAt == request.time
+          && request.resource.data.courseIds is list
+          && exists(/databases/$(database)/documents/users/$(uid))
+          && get(/databases/$(database)/documents/users/$(uid)).data.universityId == universityId
+          && get(/databases/$(database)/documents/users/$(uid)).data.status == 'pending'
+          && get(/databases/$(database)/documents/users/$(uid)).data.requestedRole == request.resource.data.role;
+        allow update, delete: if false;
+      }
+
+      match /students/{studentId} {
+        allow read: if hasRole(universityId, 'lecturer')
+          || (isMember(universityId)
+            && resource.data.userId == request.auth.uid);
+        allow create: if hasRole(universityId, 'lecturer')
+          && request.resource.data.keys().hasOnly([
+            'id', 'name', 'matricNumber', 'courseId', 'createdBy', 'createdAt'
+          ])
+          && request.resource.data.keys().hasAll([
+            'id', 'name', 'matricNumber', 'courseId', 'createdBy', 'createdAt'
+          ])
+          && request.resource.data.id == studentId
+          && request.resource.data.name is string
+          && request.resource.data.matricNumber is string
+          && request.resource.data.courseId is string
+          && request.resource.data.createdBy == request.auth.uid
+          && request.resource.data.createdAt == request.time;
+        allow update, delete: if false;
+      }
+
+      match /courses/{courseId} {
+        allow read: if isMember(universityId);
+        allow create: if hasRole(universityId, 'lecturer')
+          && request.resource.data.keys().hasOnly([
+            'id', 'name', 'lecturer', 'schedule', 'createdBy', 'createdAt'
+          ])
+          && request.resource.data.keys().hasAll([
+            'id', 'name', 'lecturer', 'schedule', 'createdBy', 'createdAt'
+          ])
+          && request.resource.data.id == courseId
+          && request.resource.data.name is string
+          && request.resource.data.lecturer is string
+          && request.resource.data.schedule is string
+          && request.resource.data.createdBy == request.auth.uid
+          && request.resource.data.createdAt == request.time;
+        allow update, delete: if false;
+      }
+
+      match /attendanceSessions/{sessionId} {
+        allow read: if isMember(universityId);
+        allow create: if hasRole(universityId, 'lecturer')
+          && request.resource.data.keys().hasOnly([
+            'id', 'courseId', 'status', 'openedBy', 'openedAt'
+          ])
+          && request.resource.data.keys().hasAll([
+            'id', 'courseId', 'status', 'openedBy', 'openedAt'
+          ])
+          && request.resource.data.id == sessionId
+          && request.resource.data.status == 'open'
+          && request.resource.data.openedBy == request.auth.uid
+          && request.resource.data.openedAt == request.time;
+        allow update: if hasRole(universityId, 'lecturer')
+          && resource.data.status == 'open'
+          && request.resource.data.status == 'closed'
+          && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['status', 'closedAt'])
+          && request.resource.data.closedAt == request.time;
+        allow delete: if false;
+      }
+
+      match /attendanceRecords/{recordId} {
+        allow read: if hasRole(universityId, 'lecturer')
+          || (isMember(universityId)
+            && resource.data.studentUid == request.auth.uid);
+        allow write: if false;
+      }
+
+      match /biometricProfiles/{studentId} {
+        allow read, write: if false;
+      }
+
+      match /auditLogs/{logId} {
+        allow read: if hasRole(universityId, 'lecturer');
+        allow write: if false;
+      }
+    }
+  }
+}
