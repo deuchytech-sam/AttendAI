@@ -18,9 +18,8 @@ import '../features/auth/domain/usecases/sign_in.dart';
 import '../features/auth/domain/usecases/sign_out.dart';
 import '../features/auth/domain/usecases/watch_university_account.dart';
 import '../features/auth/presentation/auth_bloc.dart';
-import '../features/biometrics/data/repositories/facetec_biometric_repository.dart';
-import '../features/biometrics/data/services/facetec_attendance_service.dart';
-import '../features/biometrics/data/services/facetec_enrollment_service.dart';
+import '../features/biometrics/data/repositories/face_liveness_biometric_repository.dart';
+import '../features/biometrics/data/services/face_liveness_attendance_service.dart';
 import '../features/biometrics/domain/repositories/biometric_repository.dart';
 import '../features/biometrics/domain/usecases/enroll_student_biometric.dart';
 import '../features/university/data/datasources/firestore_university_data_source.dart';
@@ -63,9 +62,8 @@ AdminBloc createAdminBloc(UniversityAccount account) {
 }
 
 BiometricRepository createBiometricRepository() {
-  return FaceTecBiometricRepository(
-    enrollmentService: FaceTecEnrollmentService(),
-    attendanceService: FaceTecAttendanceService(),
+  return FaceLivenessBiometricRepository(
+    attendanceService: FaceLivenessAttendanceService(),
   );
 }
 
@@ -78,7 +76,7 @@ UniversityBloc createUniversityBloc(UniversityAccount account) {
     FirestoreUniversityDataSource(
       FirebaseFirestore.instance,
       account,
-      FaceTecAttendanceService(),
+      FaceLivenessAttendanceService(),
     ),
   );
   return UniversityBloc(
