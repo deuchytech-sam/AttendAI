@@ -44,18 +44,7 @@ flutter {
     source = "../.."
 }
 
-repositories {
-    flatDir {
-        dir("libs")
-    }
-}
-
-val facetecAar = fileTree("libs") {
-    include("facetec-sdk*.aar")
-}.singleFile
-
 dependencies {
-    implementation(files(facetecAar))
     implementation("androidx.appcompat:appcompat:1.6.1")
     implementation("com.squareup.okio:okio:3.9.0")
 }

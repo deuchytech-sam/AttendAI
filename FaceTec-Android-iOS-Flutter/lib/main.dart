@@ -1,57 +1,30 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'facetec_config.dart';
-import 'processors/SessionRequestProcessor.dart';
+import 'package:face_liveness_verification/face_liveness_verification.dart';
+import 'liveness_verification_screen.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  SessionRequestProcessor();
   runApp(const MyApp());
 }
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
-  // This widget is the root of your application.
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Flutter FaceTec Demo',
+      title: 'AttendAI - Face Liveness Verification',
       theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // TRY THIS: Try running your application with "flutter run". You'll see
-        // the application has a blue toolbar. Then, without quitting the app,
-        // try changing the seedColor in the colorScheme below to Colors.green
-        // and then invoke "hot reload" (save your changes or press the "hot
-        // reload" button in a Flutter-supported IDE, or press "r" if you used
-        // the command line to start the app).
-        //
-        // Notice that the counter didn't reset back to zero; the application
-        // state is not lost during the reload. To reset the state, use hot
-        // restart instead.
-        //
-        // This works for code too, not just values: Most code changes can be
-        // tested with just a hot reload.
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
         useMaterial3: true,
       ),
-      home: const MyHomePage(title: 'FaceTecSDK Flutter Demo'),
+      home: const MyHomePage(title: 'AttendAI - Face Liveness Verification'),
     );
   }
 }
 
 class MyHomePage extends StatefulWidget {
   const MyHomePage({super.key, required this.title});
-
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
-
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
 
   final String title;
 
@@ -60,126 +33,163 @@ class MyHomePage extends StatefulWidget {
 }
 
 class _MyHomePageState extends State<MyHomePage> {
-  bool _showLoading = true;
-  bool _isLivenessEnabled = false;
-
-  static const faceTecSDK = MethodChannel('com.facetec.sdk');
-
   @override
   Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
     return Scaffold(
       appBar: AppBar(
-        // TRY THIS: Try changing the color here to a specific color (to
-        // Colors.amber, perhaps?) and trigger a hot reload to see the AppBar
-        // change color while the other colors stay the same.
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
         title: Text(widget.title),
       ),
       body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
         child: Column(
-          // Column is also a layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          //
-          // TRY THIS: Invoke "debug painting" (choose the "Toggle Debug Paint"
-          // action in the IDE, or press "p" in the console), to see the
-          // wireframe for each widget.
           mainAxisAlignment: MainAxisAlignment.center,
           children: <Widget>[
-            OutlinedButton(
-              onPressed: _isLivenessEnabled
-                  ? () {
-                      _startLiveness();
-                    }
-                  : null,
-              child: const Text('Start Liveness'),
+            const Text(
+              'Choose Liveness Verification Method:',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
-            Visibility(
-                visible: _showLoading,
-                child: const Text('Initializing FaceTec SDK...')),
+            const SizedBox(height: 24),
+            OutlinedButton.icon(
+              icon: const Icon(Icons.verified_user),
+              label: const Text('Face Liveness Verification'),
+              onPressed: () {
+                _startNewLivenessVerification();
+              },
+              style: OutlinedButton.styleFrom(
+                minimumSize: const Size(300, 50),
+              ),
+            ),
+            const SizedBox(height: 16),
+            OutlinedButton.icon(
+              icon: const Icon(Icons.person_add),
+              label: const Text('Enroll New Face'),
+              onPressed: () {
+                _startEnrollment();
+              },
+              style: OutlinedButton.styleFrom(
+                minimumSize: const Size(300, 50),
+              ),
+            ),
+            const SizedBox(height: 16),
+            OutlinedButton.icon(
+              icon: const Icon(Icons.face_retouching_natural),
+              label: const Text('Liveness Demo Only'),
+              onPressed: () {
+                _startLivenessDemo();
+              },
+              style: OutlinedButton.styleFrom(
+                minimumSize: const Size(300, 50),
+              ),
+            ),
           ],
         ),
       ),
     );
   }
 
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance
-        .addPostFrameCallback((_) => _initializeFaceTecSDK());
+  Future<void> _startNewLivenessVerification() async {
+    // Navigate to the new liveness verification screen
+    // This requires an enrolled template - for demo, we'll just show an error
+    await showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Verification Mode'),
+        content: const Text(
+          'This mode requires a previously enrolled face template. '
+          'Please use "Enroll New Face" first to create a template, '
+          'then use "Face Liveness Verification" to verify against it.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
   }
 
-  Future<void> _initializeFaceTecSDK() async {
-    try {
-      if (FaceTecConfig.deviceKeyIdentifier.isEmpty) {
-        return await _showErrorDialog(
-            "Config Error", "You must define your deviceKeyIdentifier.");
-      }
+  Future<void> _startEnrollment() async {
+    final faceIdController = TextEditingController();
+    final faceId = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Enroll New Face'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('Enter a unique Face ID for enrollment:'),
+            const SizedBox(height: 16),
+            TextField(
+              controller: faceIdController,
+              decoration: const InputDecoration(
+                labelText: 'Face ID',
+                hintText: 'e.g., user_001',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              if (faceIdController.text.trim().isNotEmpty) {
+                Navigator.of(context).pop(faceIdController.text.trim());
+              }
+            },
+            child: const Text('Enroll'),
+          ),
+        ],
+      ),
+    );
 
-      await faceTecSDK.invokeMethod("initialize", {
-        "deviceKeyIdentifier": FaceTecConfig.deviceKeyIdentifier,
-        "publicFaceScanEncryptionKey": FaceTecConfig.publicFaceScanEncryptionKey
-      });
-      setState(() {
-        _showLoading = false;
-        _isLivenessEnabled = true;
-      });
-    } on PlatformException catch (e) {
-      await _showErrorDialog("Initialize Error", "${e.code}: ${e.message}");
-    }
-  }
+    if (faceId != null && faceId.isNotEmpty) {
+      // Navigate to enrollment screen
+      final result = await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (context) => LivenessVerificationScreen(
+            enrolledFaceId: faceId,
+          ),
+        ),
+      );
 
-  Future<void> _startLiveness() async {
-    setState(() {
-      _isLivenessEnabled = false;
-    });
-    try {
-      await faceTecSDK
-          .invokeMethod("startLivenessCheck");
-    }
-    catch (e) {
-      await _showErrorDialog("Error", e.toString());
-    }
-    finally {
-      setState(() {
-        _isLivenessEnabled = true;
-      });
-    }
-  }
-
-  Future<void> _showErrorDialog(String errorTitle, String errorMessage) async {
-    return showDialog(
-        context: context,
-        builder: (BuildContext context) {
-          return AlertDialog(
-            title: Text(errorTitle),
-            content: Text(errorMessage),
-            actions: <Widget>[
-              TextButton(
-                onPressed: () {
-                  Navigator.of(context).pop();
-                },
-                child: const Text("Dismiss"),
-              )
-            ],
+      if (result != null && result is FaceLivenessMatchResult && result.enrolledTemplate != null) {
+        // Show success and store the template
+        if (mounted) {
+          await showDialog(
+            context: context,
+            builder: (context) => AlertDialog(
+              title: const Row(
+                children: [
+                  Icon(Icons.check_circle, color: Colors.green),
+                  SizedBox(width: 8),
+                  Text('Enrollment Successful'),
+                ],
+              ),
+              content: Text('Face template enrolled for: ${result.faceId}'),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('OK'),
+                ),
+              ],
+            ),
           );
-        });
+        }
+      }
+    }
+  }
+
+  Future<void> _startLivenessDemo() async {
+    // Navigate to liveness demo screen (no enrollment/verification, just liveness check)
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => const LivenessVerificationScreen(),
+      ),
+    );
   }
 }
