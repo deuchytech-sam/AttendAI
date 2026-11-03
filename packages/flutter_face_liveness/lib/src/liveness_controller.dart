@@ -927,7 +927,7 @@ class LivenessController extends ChangeNotifier {
         }
 
         if (embeddings.isNotEmpty) {
-          final match = await _faceIdentity!.identifyFromEmbeddings(embeddings);
+          final match = await _faceIdentity!.identifyFromEmbeddings(embeddings, faceId: _config.faceId);
           if (match != null) {
             if (match.isDuplicate) {
               // registrationOnly mode: face already exists — block registration

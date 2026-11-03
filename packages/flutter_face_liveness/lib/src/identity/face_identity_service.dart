@@ -207,9 +207,13 @@ class FaceIdentityService {
   /// Only embeddings that pass the [minEmbeddingQuality] check are included
   /// in the average. Returns null if all embeddings are rejected as low-quality
   /// or if no embeddings are provided.
+  ///
+  /// When [faceId] is provided in registrationOnly mode, it will be used
+  /// as the persistent face ID instead of generating a random one.
   Future<FaceMatchResult?> identifyFromEmbeddings(
     List<List<double>> embeddings, {
     FaceIdMode? modeOverride,
+    String? faceId,
   }) async {
     if (embeddings.isEmpty) return null;
 
@@ -239,7 +243,7 @@ class FaceIdentityService {
           '(quality=${embeddingQuality(averaged).toStringAsFixed(2)})');
     }
 
-    return _matchOrRegister(averaged, modeOverride: modeOverride);
+    return _matchOrRegister(averaged, modeOverride: modeOverride, faceId: faceId);
   }
 
   /// Identify from a single frame (convenience wrapper — prefer multi-frame).
@@ -309,6 +313,7 @@ class FaceIdentityService {
   Future<FaceMatchResult> _matchOrRegister(
     List<double> embedding, {
     FaceIdMode? modeOverride,
+    String? faceId,
   }) async {
     final effectiveMode = modeOverride ?? mode;
     final quality = embeddingQuality(embedding);
@@ -349,6 +354,13 @@ class FaceIdentityService {
 
       // ── Registration only (duplicate prevention) ──────────────────────────
       case FaceIdMode.registrationOnly:
+        // Debug log: show gallery state and match details
+        if (kDebugMode) {
+          debugPrint('[FaceId][DEBUG] Gallery face IDs: ${_gallery.keys.toList()}');
+          debugPrint('[FaceId][DEBUG] Provided faceId for registration: $faceId');
+          debugPrint('[FaceId][DEBUG] Best match: $bestId, similarity: ${bestSim.toStringAsFixed(3)}, dupThreshold: $registrationDuplicateThreshold');
+        }
+
         if (bestId != null && bestSim >= registrationDuplicateThreshold) {
           debugPrint('[FaceId] DUPLICATE blocked → $bestId  '
               'sim=${bestSim.toStringAsFixed(3)} ≥ $registrationDuplicateThreshold');
@@ -357,16 +369,16 @@ class FaceIdentityService {
             faceId: bestId, similarity: bestSim, qualityScore: quality,
           );
         }
-        // New person — register
-        final faceId = _newFaceId();
-        _gallery[faceId] = [embedding];
+        // New person — register with provided faceId or generate new one
+        final registrationFaceId = faceId ?? _newFaceId();
+        _gallery[registrationFaceId] = [embedding];
         await _flushToPrefs();
-        debugPrint('[FaceId] REGISTERED → $faceId  '
+        debugPrint('[FaceId] REGISTERED → $registrationFaceId  '
             'bestSim=${bestId != null ? bestSim.toStringAsFixed(3) : "n/a (first)"}  '
             'gallery=${_gallery.length}');
         return FaceMatchResult(
           outcome: FaceMatchOutcome.registered,
-          faceId: faceId, similarity: bestSim, qualityScore: quality,
+          faceId: registrationFaceId, similarity: bestSim, qualityScore: quality,
         );
 
       // ── Auto (match or register) ──────────────────────────────────────────

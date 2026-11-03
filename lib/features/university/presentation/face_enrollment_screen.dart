@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_face_liveness/flutter_face_liveness.dart';
 
 import '../../biometrics/domain/services/face_liveness_service.dart';
@@ -107,7 +108,9 @@ class _FaceEnrollmentScreenState extends State<FaceEnrollmentScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final config = widget.livenessService.createEnrollmentConfig();
+    final config = widget.livenessService.createEnrollmentConfig(
+      faceId: widget.userId,
+    );
 
     return Scaffold(
       appBar: AppBar(
@@ -139,13 +142,46 @@ class _FaceEnrollmentScreenState extends State<FaceEnrollmentScreen> {
                         style: const TextStyle(color: Colors.white),
                       ),
                       const SizedBox(height: 8),
-                      ElevatedButton(
-                        onPressed: () {
-                          setState(() {
-                            _error = null;
-                          });
-                        },
-                        child: const Text('Dismiss'),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: ElevatedButton(
+                              onPressed: () {
+                                setState(() {
+                                  _error = null;
+                                });
+                              },
+                              child: const Text('Dismiss'),
+                            ),
+                          ),
+                          if (kDebugMode) ...[
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: OutlinedButton(
+                                onPressed: () async {
+                                  final messenger = ScaffoldMessenger.of(context);
+                                  await widget.livenessService.clearAllTemplates();
+                                  if (mounted) {
+                                    setState(() {
+                                      _error = null;
+                                    });
+                                    messenger.showSnackBar(
+                                      const SnackBar(
+                                        content: Text('All face templates cleared (debug)'),
+                                        backgroundColor: Colors.orange,
+                                      ),
+                                    );
+                                  }
+                                },
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: Colors.orange,
+                                  side: const BorderSide(color: Colors.orange),
+                                ),
+                                child: const Text('Reset Enrollment'),
+                              ),
+                            ),
+                          ],
+                        ],
                       ),
                     ],
                   ),

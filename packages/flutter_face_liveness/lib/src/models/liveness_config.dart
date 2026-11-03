@@ -69,6 +69,11 @@ class LivenessConfig {
     this.scrfdConfidenceThreshold = 0.4,
     this.scrfdIouThreshold = 0.45,
 
+    /// Optional face ID to use for registration (registrationOnly mode).
+    /// When provided, this ID will be used instead of generating a random one.
+    /// Typically this is the user's unique identifier (e.g., Firebase UID).
+    this.faceId,
+
     // ── Best-frontal capture ────────────────────────────────────────────
     this.enableBestFrontalCapture = false,
     this.bestFrontalJpegQuality = 85,
@@ -224,6 +229,11 @@ class LivenessConfig {
   /// IoU threshold for SCRFD-2.5G-KPS non-max suppression.
   final double scrfdIouThreshold;
 
+  /// Optional face ID to use for registration (registrationOnly mode).
+  /// When provided, this ID will be used instead of generating a random one.
+  /// Typically this is the user's unique identifier (e.g., Firebase UID).
+  final String? faceId;
+
   /// When true, tracks the most-frontal frame seen during the session (by
   /// |yaw|+|pitch|) and exposes it as [LivenessResult.bestFrontalImageBytes]
   /// (upright JPEG) on completion — a human-viewable capture (e.g. for a KYC
@@ -289,6 +299,7 @@ class LivenessConfig {
     String? scrfdModelUrl,
     double? scrfdConfidenceThreshold,
     double? scrfdIouThreshold,
+    String? faceId,
     bool? enableBestFrontalCapture,
     int? bestFrontalJpegQuality,
     ThemeMode? themeMode,
@@ -337,6 +348,7 @@ class LivenessConfig {
       scrfdModelUrl: scrfdModelUrl ?? this.scrfdModelUrl,
       scrfdConfidenceThreshold: scrfdConfidenceThreshold ?? this.scrfdConfidenceThreshold,
       scrfdIouThreshold: scrfdIouThreshold ?? this.scrfdIouThreshold,
+      faceId: faceId ?? this.faceId,
       enableBestFrontalCapture: enableBestFrontalCapture ?? this.enableBestFrontalCapture,
       bestFrontalJpegQuality: bestFrontalJpegQuality ?? this.bestFrontalJpegQuality,
       themeMode: themeMode ?? this.themeMode,

@@ -60,6 +60,7 @@ class FaceLivenessService {
     bool enableFaceId = true,
     bool enableBestFrontalCapture = true,
     bool showDebugOverlay = false,
+    String? faceId,
   }) {
     return LivenessConfig(
       randomizeActions: randomizeActions,
@@ -68,6 +69,7 @@ class FaceLivenessService {
       faceIdMode: FaceIdMode.registrationOnly,
       enableBestFrontalCapture: enableBestFrontalCapture,
       showDebugOverlay: showDebugOverlay,
+      faceId: faceId,
     );
   }
 
