@@ -9,18 +9,17 @@ plugins {
 
 android {
     namespace = "com.attendai.samtechcomputers"
-    compileSdk = flutter.compileSdkVersion
+    compileSdk = 36
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+        isCoreLibraryDesugaringEnabled = true
     }
 
     defaultConfig {
         applicationId = "com.attendai.samtechcomputers"
-        // You can update the following values to match your application needs.
-        // For more information, see: https://flutter.dev/to/review-gradle-config.
         // iProov Flutter SDK requires Android API 26 or newer.
         minSdk = 26
         targetSdk = flutter.targetSdkVersion
@@ -36,16 +35,15 @@ android {
         }
     }
 
-    packagingOptions {
-        doNotStrip.add("**/libiproov-com-calcifer-lib.so")
-        // FaceTec SDK native libraries
-        doNotStrip.add("**/libfacetec*.so")
+    packaging {
+        jniLibs {
+            keepDebugSymbols += "**/libiproov-com-calcifer-lib.so"
+        }
     }
 }
 
 dependencies {
-    // FaceTec Android SDK - reference the AAR from downloaded SDK
-    implementation(files("../FaceTecSDK-android-10.1.23/facetec-sdk-10.1.23.aar"))
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
 }
 
 kotlin {

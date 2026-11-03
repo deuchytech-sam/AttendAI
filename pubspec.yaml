@@ -39,21 +39,23 @@ dependencies:
   get_it: ^9.3.0
   firebase_core: ^5.1.0
   firebase_auth: ^7.0.1
+  firebase_messaging: ^17.0.1
   cloud_firestore: ^7.1.0
   cloud_functions: ^7.0.1
   firebase_app_check: ^0.5.1
   camera: ^0.12.1
   google_mlkit_face_detection: ^0.15.1
-  face_liveness_verification: ^1.0.1
+  flutter_face_liveness:
+    path: packages/flutter_face_liveness
+  image: ^4.3.0
   permission_handler: ^12.0.3
   intl: ^0.20.3
   uuid: ^4.6.0
   flutter_secure_storage: ^11.2.0
   go_router: ^17.5.0
-  # FaceTec Flutter SDK - not on pub.dev; obtain from FaceTec and add as path dependency
-  # Example (update path to your local FaceTec Flutter SDK):
-  # facetec_flutter:
-  #   path: ../facetec_flutter_sdk
+  flutter_local_notifications: ^22.3.3
+  rxdart: ^0.28.0
+
 
 dev_dependencies:
   flutter_test:

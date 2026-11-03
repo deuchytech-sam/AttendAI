@@ -99,6 +99,22 @@ class FirestoreAdminDataSource {
         'approvedAt': FieldValue.serverTimestamp(),
       });
       transaction.update(profileRef, {'status': 'approved'});
+
+      // If student, link their Firebase Auth UID to their student document
+      if (pendingAccount.requestedRole == UniversityRole.student &&
+          pendingAccount.matricNumber != null &&
+          pendingAccount.matricNumber!.isNotEmpty) {
+        final studentsQuery = await _universityDocument
+            .collection('students')
+            .where('matricNumber', isEqualTo: pendingAccount.matricNumber!)
+            .limit(1)
+            .get();
+        if (studentsQuery.docs.isNotEmpty) {
+          transaction.update(studentsQuery.docs.first.reference, {
+            'userId': pendingAccount.uid,
+          });
+        }
+      }
     });
     return getDashboard();
   }

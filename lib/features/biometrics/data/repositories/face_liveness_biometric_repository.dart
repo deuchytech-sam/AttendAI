@@ -1,39 +1,30 @@
-import 'package:face_liveness_verification/face_liveness_verification.dart';
-
 import '../../domain/repositories/biometric_repository.dart';
-import '../services/face_liveness_attendance_service.dart' as attendance_service;
+import '../../domain/services/face_liveness_service.dart' hide EnrollmentResult, VerificationResult;
 
-/// Local implementation of the [BiometricRepository] interface using
-/// face_liveness_verification package for on-device liveness and matching.
+/// Repository for face liveness biometric operations using flutter_face_liveness.
 class FaceLivenessBiometricRepository implements BiometricRepository {
   FaceLivenessBiometricRepository({
-    required this._attendanceService,
-    FaceTemplateStore? templateStore,
-  }) : _templateStore = templateStore ?? InMemoryFaceTemplateStore();
+    required this.livenessService,
+  });
 
-  final attendance_service.FaceLivenessAttendanceService _attendanceService;
-  final FaceTemplateStore _templateStore;
+  final FaceLivenessService livenessService;
 
   @override
   Future<EnrollmentResult> enrollStudent({
     required String universityId,
     required String studentId,
   }) async {
-    try {
-      // The face_liveness_verification package handles enrollment directly
-      // The actual enrollment happens in the UI flow (LivenessVerificationScreen)
-      // This service method is called after the UI flow completes
-      // For now, we'll return success - the actual enrollment is handled by the UI
-      return const EnrollmentResult(
-        success: true,
-        errorMessage: null,
-      );
-    } catch (e) {
+    // The actual enrollment is handled by FlutterFaceLiveness widget
+    // with FaceIdMode.registrationOnly. This method checks if already enrolled.
+    final hasTemplate = await livenessService.hasTemplate(faceId: studentId);
+    if (hasTemplate) {
       return EnrollmentResult(
         success: false,
-        errorMessage: 'Enrollment failed: $e',
+        errorMessage: 'Face already enrolled for this student',
       );
     }
+    // Enrollment will be done via the widget, return ready status
+    return const EnrollmentResult(success: true);
   }
 
   @override
@@ -42,21 +33,21 @@ class FaceLivenessBiometricRepository implements BiometricRepository {
     required String studentId,
     required String sessionId,
   }) async {
-    try {
-      final result = await _attendanceService.verifyStudent();
-
-      return VerificationResult(
-        success: result.recorded,
-        verificationSessionId: result.recorded ? sessionId : null,
-        errorMessage: result.message,
-      );
-    } catch (e) {
+    // The actual verification is handled by FlutterFaceLiveness widget
+    // with FaceIdMode.verificationOnly. This method checks if enrolled.
+    final hasTemplate = await livenessService.hasTemplate(faceId: studentId);
+    if (!hasTemplate) {
       return VerificationResult(
         success: false,
-        verificationSessionId: null,
-        errorMessage: 'Verification failed: $e',
+        verificationSessionId: sessionId,
+        errorMessage: 'No enrolled template found for student $studentId',
       );
     }
+    // Verification will be done via the widget, return ready status
+    return VerificationResult(
+      success: true,
+      verificationSessionId: sessionId,
+    );
   }
 
   @override
@@ -64,9 +55,11 @@ class FaceLivenessBiometricRepository implements BiometricRepository {
     required String universityId,
     required String studentId,
   }) async {
-    await _templateStore.delete();
+    await livenessService.deleteTemplate(faceId: studentId);
   }
 
-  /// Get the template store for UI integration
-  FaceTemplateStore get templateStore => _templateStore;
+  /// Checks if a face template exists for the given user ID.
+  Future<bool> hasTemplate({required String faceId}) async {
+    return livenessService.hasTemplate(faceId: faceId);
+  }
 }

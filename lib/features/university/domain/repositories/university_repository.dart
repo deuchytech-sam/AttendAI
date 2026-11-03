@@ -17,7 +17,7 @@ abstract interface class UniversityRepository {
 
   Future<UniversityDashboard> toggleSession(String courseId);
 
-  Future<AttendanceActionResult> checkIn();
+  Future<AttendanceActionResult> checkIn({required String studentId});
 }
 
 class AttendanceActionResult {

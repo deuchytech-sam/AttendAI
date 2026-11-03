@@ -52,3 +52,27 @@ final class AttendanceSessionToggled extends UniversityEvent {
 final class StudentCheckInRequested extends UniversityEvent {
   const StudentCheckInRequested();
 }
+
+/// Event fired when a session status changes (real-time update from Firestore).
+final class SessionStatusChanged extends UniversityEvent {
+  const SessionStatusChanged({
+    required this.courseId,
+    required this.courseName,
+    required this.isOpen,
+  });
+
+  final String courseId;
+  final String courseName;
+  final bool isOpen;
+
+  @override
+  List<Object?> get props => [courseId, courseName, isOpen];
+}
+
+/// Event to dismiss the action message banner without reloading the dashboard.
+final class ActionMessageDismissed extends UniversityEvent {
+  const ActionMessageDismissed();
+
+  @override
+  List<Object?> get props => [];
+}

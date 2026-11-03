@@ -1,16 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:intl/intl.dart';
 
-import '../../../app/injection_container.dart';
 import '../../../app/theme/app_theme.dart';
-import '../domain/entities/attendance_entry.dart';
 import '../domain/entities/course.dart';
 import '../domain/entities/university_role.dart';
 import '../domain/entities/university_student.dart';
 import 'university_bloc.dart';
 import 'university_event.dart';
 import 'university_state.dart';
+import 'face_verification_screen.dart';
+import 'face_enrollment_screen.dart';
 
 class UniversityHomePage extends StatefulWidget {
   const UniversityHomePage({
@@ -34,18 +33,35 @@ class UniversityHomePage extends StatefulWidget {
 
 class _UniversityHomePageState extends State<UniversityHomePage> {
   int _tab = 0;
+
   UniversityRole get _role => widget.role;
+
   String get _universityId => widget.universityId;
 
   @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        context.read<UniversityBloc>().add(
+          const UniversityDashboardRequested(),
+        );
+      }
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final isLecturer = _role == UniversityRole.lecturer;
+
     return Scaffold(
       appBar: AppBar(
+        titleSpacing: 16,
         title: Row(
           children: [
             Container(
-              width: 36,
-              height: 36,
+              width: 38,
+              height: 38,
               decoration: BoxDecoration(
                 color: AppTheme.teal,
                 borderRadius: BorderRadius.circular(12),
@@ -53,7 +69,7 @@ class _UniversityHomePageState extends State<UniversityHomePage> {
               child: const Icon(
                 Icons.fact_check_rounded,
                 color: Colors.white,
-                size: 21,
+                size: 22,
               ),
             ),
             const SizedBox(width: 10),
@@ -65,7 +81,7 @@ class _UniversityHomePageState extends State<UniversityHomePage> {
                   'AttendAI',
                   style: TextStyle(
                     fontWeight: FontWeight.w800,
-                    letterSpacing: -.4,
+                    letterSpacing: -0.4,
                   ),
                 ),
                 Text(
@@ -84,28 +100,43 @@ class _UniversityHomePageState extends State<UniversityHomePage> {
         actions: [
           IconButton(
             onPressed: () => _notice('Notifications will appear here.'),
+            tooltip: 'Notifications',
             icon: const Icon(Icons.notifications_none_rounded),
           ),
-          IconButton(
-            onPressed: widget.onSignOut,
-            tooltip: 'Sign out',
-            icon: const Icon(Icons.logout_rounded),
-          ),
-          Padding(
-            padding: const EdgeInsets.only(right: 12, left: 4),
-            child: Tooltip(
-              message: '${widget.displayName} · ${_role.name}',
+          PopupMenuButton<String>(
+            tooltip: 'Account options',
+            onSelected: (value) {
+              if (value == 'sign_out') {
+                widget.onSignOut();
+              } else if (value == 'profile') {
+                _notice('${widget.displayName} · ${_role.name}');
+              }
+            },
+            itemBuilder: (context) => const [
+              PopupMenuItem(
+                value: 'profile',
+                child: ListTile(
+                  leading: Icon(Icons.person_outline_rounded),
+                  title: Text('My profile'),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+              PopupMenuItem(
+                value: 'sign_out',
+                child: ListTile(
+                  leading: Icon(Icons.logout_rounded),
+                  title: Text('Sign out'),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+            ],
+            child: Padding(
+              padding: const EdgeInsets.only(right: 16, left: 4),
               child: CircleAvatar(
                 backgroundColor: const Color(0xFFDCEFEB),
                 foregroundColor: AppTheme.teal,
                 child: Text(
-                  widget.displayName
-                      .trim()
-                      .split(RegExp(r'\s+'))
-                      .where((part) => part.isNotEmpty)
-                      .take(2)
-                      .map((part) => part[0].toUpperCase())
-                      .join(),
+                  _initials(widget.displayName),
                   style: const TextStyle(fontWeight: FontWeight.bold),
                 ),
               ),
@@ -118,60 +149,78 @@ class _UniversityHomePageState extends State<UniversityHomePage> {
         child: BlocConsumer<UniversityBloc, UniversityState>(
           listener: (context, state) {
             final message = state.actionMessage ?? state.errorMessage;
+
             if (state.status == UniversityLoadStatus.loaded &&
-                message != null) {
-              ScaffoldMessenger.of(
-                context,
-              ).showSnackBar(SnackBar(content: Text(message)));
+                message != null &&
+                message.trim().isNotEmpty) {
+              ScaffoldMessenger.of(context)
+                ..hideCurrentSnackBar()
+                ..showSnackBar(SnackBar(content: Text(message)));
             }
           },
           builder: (context, state) {
-            if (state.status == UniversityLoadStatus.loading ||
-                state.status == UniversityLoadStatus.initial) {
+            if (state.status == UniversityLoadStatus.initial ||
+                state.status == UniversityLoadStatus.loading) {
               return const Center(child: CircularProgressIndicator());
             }
+
             if (state.status == UniversityLoadStatus.failure) {
-              return Center(
-                child: Padding(
-                  padding: const EdgeInsets.all(24),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
+              return _ErrorState(
+                message:
+                    state.errorMessage ??
+                    'Could not load the university dashboard.',
+                onRetry: () {
+                  context.read<UniversityBloc>().add(
+                    const UniversityDashboardRequested(),
+                  );
+                },
+              );
+            }
+
+            final openSessionCourse = state.openSessionCourseId == null
+                ? null
+                : state.courses.where((course) {
+                    return course.id == state.openSessionCourseId;
+                  }).firstOrNull;
+
+            return Column(
+              children: [
+                if (openSessionCourse != null ||
+                    _shouldShowSessionBanner(state))
+                  _SessionNotificationBanner(
+                    course: openSessionCourse,
+                    message: state.actionMessage,
+                    onDismiss: () => _dismissActionMessage(context),
+                    onCheckIn: !isLecturer
+                        ? () => _startFaceVerification(context)
+                        : null,
+                  ),
+                Expanded(
+                  child: IndexedStack(
+                    index: _tab,
                     children: [
-                      Text(
-                        state.errorMessage ??
-                            'Could not load the university dashboard.',
+                      _OverviewPage(
+                        role: _role,
+                        displayName: widget.displayName,
+                        matricNumber: widget.matricNumber,
+                        onAddStudent: _addStudent,
+                        onAddCourse: _addCourse,
+                        onOpenAttendance: () => setState(() => _tab = 2),
                       ),
-                      const SizedBox(height: 12),
-                      FilledButton(
-                        onPressed: () => context.read<UniversityBloc>().add(
-                          const UniversityDashboardRequested(),
-                        ),
-                        child: const Text('Try again'),
+                      _CoursesPage(
+                        role: _role,
+                        onAddCourse: _addCourse,
+                        onAddStudent: _addStudent,
                       ),
+                      _AttendancePage(
+                        role: _role,
+                        universityId: widget.universityId,
+                      ),
+                      _ReportsPage(role: _role),
+                      if (isLecturer) const _StudentsPage(),
                     ],
                   ),
                 ),
-              );
-            }
-            return IndexedStack(
-              index: _tab,
-              children: [
-                _OverviewPage(
-                  role: _role,
-                  displayName: widget.displayName,
-                  onAddStudent: _addStudent,
-                  onAddCourse: _addCourse,
-                  onOpenAttendance: () => setState(() => _tab = 2),
-                  matricNumber: widget.matricNumber,
-                ),
-                _CoursesPage(
-                  role: _role,
-                  onAddCourse: _addCourse,
-                  onAddStudent: _addStudent,
-                ),
-                _AttendancePage(role: _role, onEnrollFace: _showEnrollmentDialog),
-                _ReportsPage(role: _role),
-                if (_role == UniversityRole.lecturer) _StudentsPage(),
               ],
             );
           },
@@ -183,23 +232,28 @@ class _UniversityHomePageState extends State<UniversityHomePage> {
         destinations: [
           const NavigationDestination(
             icon: Icon(Icons.grid_view_rounded),
+            selectedIcon: Icon(Icons.grid_view_rounded),
             label: 'Overview',
           ),
           const NavigationDestination(
             icon: Icon(Icons.menu_book_outlined),
+            selectedIcon: Icon(Icons.menu_book_rounded),
             label: 'Courses',
           ),
           const NavigationDestination(
             icon: Icon(Icons.fact_check_outlined),
+            selectedIcon: Icon(Icons.fact_check_rounded),
             label: 'Attendance',
           ),
           const NavigationDestination(
-            icon: Icon(Icons.bar_chart_rounded),
+            icon: Icon(Icons.bar_chart_outlined),
+            selectedIcon: Icon(Icons.bar_chart_rounded),
             label: 'Reports',
           ),
-          if (_role == UniversityRole.lecturer)
+          if (isLecturer)
             const NavigationDestination(
               icon: Icon(Icons.people_alt_outlined),
+              selectedIcon: Icon(Icons.people_alt_rounded),
               label: 'Students',
             ),
         ],
@@ -207,9 +261,49 @@ class _UniversityHomePageState extends State<UniversityHomePage> {
     );
   }
 
-  void _notice(String message) => ScaffoldMessenger.of(
-    context,
-  ).showSnackBar(SnackBar(content: Text(message)));
+  bool _shouldShowSessionBanner(UniversityState state) {
+    final message = state.actionMessage ?? '';
+    return message.contains('Session started') ||
+        message.contains('Session ended');
+  }
+
+  void _dismissActionMessage(BuildContext context) {
+    context.read<UniversityBloc>().add(const ActionMessageDismissed());
+  }
+
+  Future<void> _startFaceVerification(BuildContext context) async {
+    final bloc = context.read<UniversityBloc>();
+    final userId = bloc.dataSource.userId;
+    final universityId = widget.universityId;
+    final livenessService = bloc.dataSource.livenessService;
+
+    final universityBloc = context.read<UniversityBloc>();
+
+    final result = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => BlocProvider.value(
+          value: universityBloc,
+          child: FaceVerificationScreen(
+            userId: userId,
+            universityId: universityId,
+            livenessService: livenessService,
+          ),
+        ),
+      ),
+    );
+
+    if (result == true && mounted) {
+      _notice('Check-in recorded successfully!');
+    }
+  }
+
+  void _notice(String message) {
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
+  }
 
   Future<void> _addCourse() async {
     final values = await _textFields(
@@ -221,8 +315,9 @@ class _UniversityHomePageState extends State<UniversityHomePage> {
         ('Schedule and venue', 'e.g. Thu · 11:00 AM · LT 1'),
       ],
     );
-    if (values == null || values[0].isEmpty) return;
-    if (!mounted) return;
+
+    if (values == null || values[0].isEmpty || !mounted) return;
+
     context.read<UniversityBloc>().add(
       UniversityCourseAdded(
         name: values[0],
@@ -235,8 +330,15 @@ class _UniversityHomePageState extends State<UniversityHomePage> {
   Future<void> _addStudent() async {
     final state = context.read<UniversityBloc>().state;
     final values = await _studentFields(context, state.courses);
-    if (values == null || values[0].isEmpty || values[1].isEmpty) return;
-    if (!mounted) return;
+
+    if (values == null ||
+        values[0].isEmpty ||
+        values[1].isEmpty ||
+        values[2].isEmpty ||
+        !mounted) {
+      return;
+    }
+
     context.read<UniversityBloc>().add(
       UniversityStudentEnrolled(
         name: values[0],
@@ -246,16 +348,60 @@ class _UniversityHomePageState extends State<UniversityHomePage> {
     );
   }
 
-  Future<void> _showEnrollmentDialog(String studentId) async {
-    final enrollmentUsecase = createEnrollStudentBiometric();
+  Future<void> _showEnrollmentDialog() async {
+    // Get current state to access students list
+    final state = context.read<UniversityBloc>().state;
+    final students = state.students.where((s) => s.userId != null && s.userId!.isNotEmpty).toList();
+
+    if (students.isEmpty) {
+      _notice('No students with linked Firebase accounts found. Students must sign in first to link their account.');
+      return;
+    }
+
+    // Show student selection dialog
+    final selectedStudent = await showDialog<UniversityStudent>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Select student to enroll'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: ListView.builder(
+            shrinkWrap: true,
+            itemCount: students.length,
+            itemBuilder: (_, index) {
+              final student = students[index];
+              return ListTile(
+                title: Text(student.name),
+                subtitle: Text('Matric: ${student.matricNumber}'),
+                onTap: () => Navigator.pop(dialogContext, student),
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+        ],
+      ),
+    );
+
+    if (selectedStudent == null || !mounted) return;
 
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('Enroll Face'),
+        icon: const Icon(
+          Icons.face_retouching_natural_rounded,
+          size: 38,
+          color: AppTheme.teal,
+        ),
+        title: Text('Enroll face for ${selectedStudent.name}'),
         content: const Text(
-          'This will scan your face to create a secure biometric profile for attendance verification. '
-          'Your face data is processed by iProov and never stored on this device.',
+          'This will start the camera to capture the student\'s face '
+          'and create a biometric profile for attendance. '
+          'The student should be present and positioned in front of the camera.',
         ),
         actions: [
           TextButton(
@@ -264,7 +410,7 @@ class _UniversityHomePageState extends State<UniversityHomePage> {
           ),
           FilledButton(
             onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Enroll'),
+            child: const Text('Continue'),
           ),
         ],
       ),
@@ -272,32 +418,301 @@ class _UniversityHomePageState extends State<UniversityHomePage> {
 
     if (confirmed != true || !mounted) return;
 
-    // Show loading dialog
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => const Center(child: CircularProgressIndicator()),
+    // Use the student's Firebase Auth UID (userId) for enrollment
+    // This matches what the student will use during check-in
+    final faceEnrollmentId = selectedStudent.userId!;
+
+    // Get the liveness service from the bloc's data source
+    final bloc = context.read<UniversityBloc>();
+    final livenessService = bloc.dataSource.livenessService;
+
+    // Launch the enrollment screen
+    final enrolled = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => FaceEnrollmentScreen(
+          userId: faceEnrollmentId,
+          universityId: _universityId,
+          livenessService: livenessService,
+        ),
+      ),
     );
 
-    try {
-      final result = await enrollmentUsecase(
-        universityId: _universityId,
-        studentId: studentId,
-      );
+    if (!mounted) return;
 
-      if (!mounted) return;
-      Navigator.pop(context); // Close loading dialog
-
-      if (result.success) {
-        _notice('Face enrolled successfully! You can now verify your attendance.');
-      } else {
-        _notice('Enrollment failed: ${result.errorMessage ?? 'Unknown error'}');
-      }
-    } catch (e) {
-      if (!mounted) return;
-      Navigator.pop(context); // Close loading dialog
-      _notice('Enrollment failed: $e');
+    if (enrolled == true) {
+      _notice('Face enrolled successfully for ${selectedStudent.name}.');
+    } else {
+      _notice('Face enrollment was cancelled or failed.');
     }
+  }
+}
+
+String _initials(String name) {
+  return name
+      .trim()
+      .split(RegExp(r'\s+'))
+      .where((part) => part.isNotEmpty)
+      .take(2)
+      .map((part) => part[0].toUpperCase())
+      .join();
+}
+
+Future<List<String>?> _textFields(
+  BuildContext context, {
+  required String title,
+  required List<(String, String)> fields,
+}) async {
+  final controllers = List.generate(
+    fields.length,
+    (_) => TextEditingController(),
+  );
+
+  try {
+    return await showDialog<List<String>>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(title),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (var i = 0; i < fields.length; i++) ...[
+                TextField(
+                  controller: controllers[i],
+                  textCapitalization: TextCapitalization.sentences,
+                  decoration: InputDecoration(
+                    labelText: fields[i].$1,
+                    hintText: fields[i].$2,
+                    border: const OutlineInputBorder(),
+                  ),
+                ),
+                if (i < fields.length - 1) const SizedBox(height: 14),
+              ],
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              Navigator.pop(
+                dialogContext,
+                controllers
+                    .map((controller) => controller.text.trim())
+                    .toList(),
+              );
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+  } finally {
+    for (final controller in controllers) {
+      controller.dispose();
+    }
+  }
+}
+
+Future<List<String>?> _studentFields(
+  BuildContext context,
+  List<Course> courses,
+) async {
+  final nameController = TextEditingController();
+  final matricController = TextEditingController();
+  var selectedCourseId = courses.isNotEmpty ? courses.first.id : '';
+
+  try {
+    return await showDialog<List<String>>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Enroll student'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: nameController,
+                  textCapitalization: TextCapitalization.words,
+                  decoration: const InputDecoration(
+                    labelText: 'Student name',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                TextField(
+                  controller: matricController,
+                  decoration: const InputDecoration(
+                    labelText: 'Matriculation number',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                if (courses.isEmpty)
+                  const Text('Create a course before enrolling a student.')
+                else
+                  DropdownButtonFormField<String>(
+                    value: selectedCourseId,
+                    isExpanded: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Course',
+                      border: OutlineInputBorder(),
+                    ),
+                    items: courses
+                        .map(
+                          (course) => DropdownMenuItem<String>(
+                            value: course.id,
+                            child: Text(
+                              course.name,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (value) {
+                      if (value != null) {
+                        setDialogState(() {
+                          selectedCourseId = value;
+                        });
+                      }
+                    },
+                  ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: courses.isEmpty
+                  ? null
+                  : () {
+                      Navigator.pop(dialogContext, [
+                        nameController.text.trim(),
+                        matricController.text.trim(),
+                        selectedCourseId,
+                      ]);
+                    },
+              child: const Text('Enroll'),
+            ),
+          ],
+        ),
+      ),
+    );
+  } finally {
+    nameController.dispose();
+    matricController.dispose();
+  }
+}
+
+class _SessionNotificationBanner extends StatelessWidget {
+  const _SessionNotificationBanner({
+    required this.course,
+    required this.message,
+    required this.onDismiss,
+    this.onCheckIn,
+  });
+
+  final Course? course;
+  final String? message;
+  final VoidCallback onDismiss;
+  final VoidCallback? onCheckIn;
+
+  @override
+  Widget build(BuildContext context) {
+    final isOpen = course != null;
+    final courseName = course?.name ?? 'this course';
+    final msg = message ?? '';
+
+    final foreground = isOpen
+        ? const Color(0xFF1B5E20)
+        : const Color(0xFF4A148C);
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: isOpen
+              ? [const Color(0xFFE8F5E9), const Color(0xFFC8E6C9)]
+              : [const Color(0xFFF3E5F5), const Color(0xFFE1BEE7)],
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: isOpen ? const Color(0xFF81C784) : const Color(0xFFCE93D8),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                isOpen
+                    ? Icons.play_circle_filled_rounded
+                    : Icons.stop_circle_rounded,
+                color: foreground,
+                size: 25,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      isOpen ? 'Session started' : 'Session ended',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w800,
+                        color: foreground,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      msg.isNotEmpty
+                          ? msg
+                          : isOpen
+                          ? 'Attendance is open for $courseName.'
+                          : 'The attendance session has ended.',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: foreground.withValues(alpha: 0.85),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              IconButton(
+                onPressed: onDismiss,
+                tooltip: 'Refresh dashboard',
+                icon: const Icon(Icons.close_rounded, size: 20),
+              ),
+            ],
+          ),
+          if (isOpen && onCheckIn != null) ...[
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: onCheckIn,
+                icon: const Icon(Icons.face_rounded),
+                label: const Text('Verify face and check in'),
+                style: FilledButton.styleFrom(
+                  backgroundColor: AppTheme.teal,
+                  foregroundColor: Colors.white,
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
   }
 }
 
@@ -310,6 +725,7 @@ class _OverviewPage extends StatelessWidget {
     required this.onOpenAttendance,
     this.matricNumber,
   });
+
   final UniversityRole role;
   final String displayName;
   final VoidCallback onAddStudent;
@@ -318,288 +734,187 @@ class _OverviewPage extends StatelessWidget {
   final String? matricNumber;
 
   @override
-  Widget build(
-    BuildContext context,
-  ) => BlocBuilder<UniversityBloc, UniversityState>(
-    builder: (context, state) {
-      final isLecturer = role == UniversityRole.lecturer;
-      final ownStudent = state.students.isEmpty ? null : state.students.first;
-      final total = isLecturer
-          ? state.students.length
-          : (ownStudent == null ? 0 : 1);
-      final present = isLecturer
-          ? state.entries.length
-          : ownStudent == null
-          ? 0
-          : state.entries
-                .where((entry) => entry.studentId == ownStudent.id)
-                .length;
-      final rate = total == 0 ? 0 : (present * 100 / total).round();
-      return ListView(
-        padding: const EdgeInsets.fromLTRB(20, 10, 20, 28),
-        children: [
-          Text(
-            DateFormat('EEEE, d MMMM yyyy').format(DateTime.now()),
-            style: const TextStyle(
-              color: Color(0xFF71808A),
-              fontSize: 13,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            isLecturer ? 'Welcome, $displayName' : 'Welcome back, $displayName',
-            style: const TextStyle(
-              fontSize: 25,
-              fontWeight: FontWeight.w800,
-              color: AppTheme.ink,
-              letterSpacing: -.7,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            isLecturer
-                ? 'Here’s your university attendance overview.'
-                : 'Here’s your course schedule and attendance.',
-            style: const TextStyle(color: Color(0xFF75838B)),
-          ),
-          const SizedBox(height: 18),
-          _AttendanceHero(
-            role: role,
-            rate: rate,
-            present: present,
-            total: total,
-            onOpenAttendance: onOpenAttendance,
-          ),
-          const SizedBox(height: 22),
-          _SectionHeading(
-            title: isLecturer ? 'University overview' : 'My semester',
-          ),
-          const SizedBox(height: 12),
-          if (isLecturer)
-            Row(
-              children: [
-                Expanded(
-                  child: _StatCard(
-                    icon: Icons.people_alt_outlined,
-                    label: 'Students',
-                    value: '${state.students.length}',
-                    tint: const Color(0xFFE9F3F1),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: _StatCard(
-                    icon: Icons.menu_book_rounded,
-                    label: 'Courses',
-                    value: '${state.courses.length}',
-                    tint: const Color(0xFFEEF0FA),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: _StatCard(
-                    icon: Icons.sensors_rounded,
-                    label: 'Live',
-                    value: state.openSessionCourseId == null ? '0' : '1',
-                    tint: const Color(0xFFFFF4E7),
-                  ),
-                ),
-              ],
-            )
-          else
-            Row(
-              children: [
-                Expanded(
-                  child: _StatCard(
-                    icon: Icons.menu_book_rounded,
-                    label: 'My courses',
-                    value: '${state.courses.length}',
-                    tint: const Color(0xFFEEF0FA),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: _StatCard(
-                    icon: Icons.badge_outlined,
-                    label: 'Matric no.',
-                    value: matricNumber ?? ownStudent?.matricNumber ?? 'Pending',
-                    tint: const Color(0xFFE9F3F1),
-                  ),
-                ),
-              ],
-            ),
-          const SizedBox(height: 22),
-          _SectionHeading(
-            title: isLecturer ? 'Lecturer actions' : 'Quick actions',
-          ),
-          const SizedBox(height: 12),
-          if (isLecturer)
-            Row(
-              children: [
-                Expanded(
-                  child: _QuickAction(
-                    icon: Icons.person_add_alt_1_rounded,
-                    label: 'Enroll student',
-                    onTap: onAddStudent,
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: _QuickAction(
-                    icon: Icons.add_circle_outline_rounded,
-                    label: 'Add course',
-                    onTap: onAddCourse,
-                  ),
-                ),
-              ],
-            )
-          else
-            _QuickAction(
-              icon: Icons.fact_check_outlined,
-              label: 'Go to attendance',
-              onTap: onOpenAttendance,
-            ),
-          const SizedBox(height: 22),
-          _SectionHeading(
-            title: isLecturer ? 'Courses you teach' : 'My courses',
-            trailing: isLecturer ? 'This semester' : null,
-          ),
-          const SizedBox(height: 10),
-          ...state.courses
-              .take(4)
-              .map(
-                (course) => Padding(
-                  padding: const EdgeInsets.only(bottom: 9),
-                  child: _CourseTile(
-                    course: course,
-                    rosterSize: context
-                        .read<UniversityBloc>()
-                        .state
-                        .studentsFor(course.id)
-                        .length,
-                    presentCount: context
-                        .read<UniversityBloc>()
-                        .state
-                        .presentFor(course.id),
-                    studentView: !isLecturer,
-                  ),
-                ),
-              ),
-        ],
-      );
-    },
-  );
-}
+  Widget build(BuildContext context) {
+    return BlocBuilder<UniversityBloc, UniversityState>(
+      builder: (context, state) {
+        final courses = state.courses;
+        final isLecturer = role == UniversityRole.lecturer;
+        final hasOpenSession = state.openSessionCourseId != null;
 
-class _AttendanceHero extends StatelessWidget {
-  const _AttendanceHero({
-    required this.role,
-    required this.rate,
-    required this.present,
-    required this.total,
-    required this.onOpenAttendance,
-  });
-  final UniversityRole role;
-  final int rate;
-  final int present;
-  final int total;
-  final VoidCallback onOpenAttendance;
-
-  @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.all(20),
-    decoration: BoxDecoration(
-      gradient: const LinearGradient(
-        colors: [Color(0xFF087E78), Color(0xFF11645F)],
-        begin: Alignment.topLeft,
-        end: Alignment.bottomRight,
-      ),
-      borderRadius: BorderRadius.circular(22),
-    ),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                role == UniversityRole.lecturer
-                    ? 'Today’s attendance'
-                    : 'My attendance today',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-            _Pill(
-              label: 'DEMO',
-              color: Colors.white.withValues(alpha: .17),
-              textColor: Colors.white,
-            ),
-          ],
-        ),
-        const SizedBox(height: 14),
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.end,
+        return ListView(
+          padding: const EdgeInsets.all(20),
           children: [
             Text(
-              '$rate%',
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 42,
-                height: 1,
-                fontWeight: FontWeight.w800,
-              ),
+              'Welcome back,',
+              style: TextStyle(color: Colors.grey.shade600),
             ),
-            const SizedBox(width: 10),
-            Padding(
-              padding: const EdgeInsets.only(bottom: 4),
-              child: Text(
-                role == UniversityRole.lecturer
-                    ? '$present checked in from $total students'
-                    : present == 0
-                    ? 'Not checked in yet'
-                    : 'Checked in for today',
-                style: TextStyle(
-                  color: Colors.white.withValues(alpha: .82),
-                  fontSize: 12,
+            const SizedBox(height: 4),
+            Text(
+              displayName,
+              style: Theme.of(context).textTheme.headlineSmall
+                  ?.copyWith(fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              isLecturer
+                  ? 'Manage your courses and attendance.'
+                  : 'Stay on top of your classes and attendance.',
+              style: TextStyle(color: Colors.grey.shade600),
+            ),
+            if (matricNumber != null && matricNumber!.trim().isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(
+                'Matric number: $matricNumber',
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+            ],
+            const SizedBox(height: 24),
+            Container(
+              padding: const EdgeInsets.all(22),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [Color(0xFF087F8C), Color(0xFF0B5968)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
                 ),
+                borderRadius: BorderRadius.circular(24),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(
+                    Icons.fact_check_rounded,
+                    color: Colors.white70,
+                    size: 32,
+                  ),
+                  const SizedBox(height: 18),
+                  Text(
+                    isLecturer
+                        ? 'Your teaching dashboard'
+                        : 'Your attendance dashboard',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 21,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    hasOpenSession
+                        ? 'An attendance session is currently open.'
+                        : 'Manage university activity from one place.',
+                    style: const TextStyle(color: Colors.white70, height: 1.5),
+                  ),
+                  const SizedBox(height: 20),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      onPressed: onOpenAttendance,
+                      icon: const Icon(Icons.fact_check_outlined),
+                      label: const Text('Open attendance'),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: Colors.white,
+                        foregroundColor: const Color(0xFF087F8C),
+                        padding: const EdgeInsets.symmetric(vertical: 15),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
+            const SizedBox(height: 26),
+            const _SectionHeading(title: 'At a glance'),
+            const SizedBox(height: 12),
+            GridView.count(
+              crossAxisCount: 2,
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              crossAxisSpacing: 12,
+              mainAxisSpacing: 12,
+              childAspectRatio: 1.25,
+              children: [
+                _DashboardMetric(
+                  title: 'Courses',
+                  value: '${courses.length}',
+                  icon: Icons.menu_book_rounded,
+                  color: AppTheme.teal,
+                ),
+                _DashboardMetric(
+                  title: 'Open sessions',
+                  value: hasOpenSession ? '1' : '0',
+                  icon: Icons.radio_button_checked_rounded,
+                  color: hasOpenSession ? Colors.green : Colors.blueGrey,
+                ),
+                _DashboardMetric(
+                  title: 'Your role',
+                  value: isLecturer ? 'Lecturer' : 'Student',
+                  icon: Icons.person_outline_rounded,
+                  color: Colors.deepPurple,
+                ),
+                _DashboardMetric(
+                  title: 'Session status',
+                  value: hasOpenSession ? 'Active' : 'Inactive',
+                  icon: Icons.fact_check_outlined,
+                  color: hasOpenSession ? Colors.green : Colors.orange,
+                ),
+              ],
+            ),
+            const SizedBox(height: 26),
+            const _SectionHeading(title: 'Quick actions'),
+            const SizedBox(height: 12),
+            if (isLecturer) ...[
+              _ActionTile(
+                icon: Icons.add_circle_outline_rounded,
+                title: 'Create a course',
+                subtitle: 'Add a course, lecturer, and schedule.',
+                onTap: onAddCourse,
+              ),
+              _ActionTile(
+                icon: Icons.person_add_alt_1_rounded,
+                title: 'Enroll a student',
+                subtitle: 'Register a student for a course.',
+                onTap: onAddStudent,
+              ),
+            ],
+            _ActionTile(
+              icon: Icons.fact_check_outlined,
+              title: 'Attendance',
+              subtitle: 'View current attendance session information.',
+              onTap: onOpenAttendance,
+            ),
+            const SizedBox(height: 26),
+            const _SectionHeading(title: 'Your courses'),
+            const SizedBox(height: 12),
+            if (courses.isEmpty)
+              _EmptyState(
+                icon: Icons.menu_book_outlined,
+                title: 'No courses yet',
+                message: isLecturer
+                    ? 'Create your first course to get started.'
+                    : 'Your assigned courses will appear here.',
+                actionLabel: isLecturer ? 'Add course' : null,
+                onAction: isLecturer ? onAddCourse : null,
+              )
+            else
+              ...courses
+                  .take(4)
+                  .map(
+                    (course) => _CourseCard(
+                      course: course,
+                      isOpen: course.id == state.openSessionCourseId,
+                      isLecturer: isLecturer,
+                      onToggleSession: isLecturer
+                          ? () => context.read<UniversityBloc>().add(
+                                AttendanceSessionToggled(course.id),
+                              )
+                          : null,
+                    ),
+                  ),
           ],
-        ),
-        const SizedBox(height: 16),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(20),
-          child: LinearProgressIndicator(
-            value: rate / 100,
-            minHeight: 7,
-            backgroundColor: Colors.white.withValues(alpha: .2),
-            valueColor: const AlwaysStoppedAnimation(Colors.white),
-          ),
-        ),
-        const SizedBox(height: 16),
-        SizedBox(
-          width: double.infinity,
-          child: FilledButton.icon(
-            onPressed: onOpenAttendance,
-            style: FilledButton.styleFrom(
-              backgroundColor: Colors.white,
-              foregroundColor: AppTheme.teal,
-            ),
-            icon: const Icon(Icons.arrow_forward_rounded, size: 18),
-            label: Text(
-              role == UniversityRole.lecturer
-                  ? 'Manage sessions'
-                  : 'Check my attendance',
-            ),
-          ),
-        ),
-      ],
-    ),
-  );
+        );
+      },
+    );
+  }
 }
 
 class _CoursesPage extends StatelessWidget {
@@ -608,761 +923,535 @@ class _CoursesPage extends StatelessWidget {
     required this.onAddCourse,
     required this.onAddStudent,
   });
+
   final UniversityRole role;
   final VoidCallback onAddCourse;
   final VoidCallback onAddStudent;
 
   @override
-  Widget build(BuildContext context) =>
-      BlocBuilder<UniversityBloc, UniversityState>(
-        builder: (context, state) {
-          final isLecturer = role == UniversityRole.lecturer;
-          final ownStudent = state.students.isEmpty
-              ? null
-              : state.students.first;
-          final courses = isLecturer
-              ? state.courses
-              : ownStudent == null
-              ? const <Course>[]
-              : state.courses
-                    .where((course) => course.id == ownStudent.courseId)
-                    .toList();
-          return ListView(
-            padding: const EdgeInsets.all(20),
-            children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: _PageTitle(
-                      title: isLecturer ? 'Courses' : 'My courses',
-                      subtitle: isLecturer
-                          ? 'Manage course rosters and sessions'
-                          : 'Your current semester courses',
-                    ),
-                  ),
-                  if (isLecturer)
-                    IconButton.filledTonal(
-                      onPressed: onAddCourse,
-                      icon: const Icon(Icons.add_rounded),
-                      tooltip: 'Add course',
-                    ),
-                ],
-              ),
-              const SizedBox(height: 14),
-              ...courses.map(
-                (course) => Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: _CourseDetailCard(
-                    course: course,
-                    studentView: !isLecturer,
+  Widget build(BuildContext context) {
+    return BlocBuilder<UniversityBloc, UniversityState>(
+      builder: (context, state) {
+        final courses = state.courses;
+        final isLecturer = role == UniversityRole.lecturer;
+
+        return ListView(
+          padding: const EdgeInsets.all(20),
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Courses',
+                    style: Theme.of(context).textTheme.headlineSmall
+                        ?.copyWith(fontWeight: FontWeight.w800),
                   ),
                 ),
-              ),
-              if (isLecturer)
-                OutlinedButton.icon(
-                  onPressed: onAddStudent,
-                  icon: const Icon(Icons.person_add_alt_1_rounded),
-                  label: const Text('Enroll a student'),
-                ),
-              const SizedBox(height: 18),
-            ],
-          );
-        },
-      );
-}
-
-class _CourseDetailCard extends StatelessWidget {
-  const _CourseDetailCard({required this.course, required this.studentView});
-  final Course course;
-  final bool studentView;
-
-  @override
-  Widget build(BuildContext context) =>
-      BlocBuilder<UniversityBloc, UniversityState>(
-        builder: (context, state) {
-          final roster = context.read<UniversityBloc>().state.studentsFor(
-            course.id,
-          );
-          return Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Container(
-                        width: 43,
-                        height: 43,
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFE8F3F1),
-                          borderRadius: BorderRadius.circular(14),
-                        ),
-                        child: const Icon(
-                          Icons.menu_book_rounded,
-                          color: AppTheme.teal,
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              course.name,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w700,
-                                fontSize: 15,
-                              ),
-                            ),
-                            Text(
-                              course.schedule,
-                              style: const TextStyle(
-                                color: Color(0xFF7B888F),
-                                fontSize: 11,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
+                if (isLecturer)
+                  FilledButton.icon(
+                    onPressed: onAddCourse,
+                    icon: const Icon(Icons.add, size: 18),
+                    label: const Text('Add course'),
                   ),
-                  const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 13),
-                    child: Divider(height: 1),
-                  ),
-                  Row(
-                    children: [
-                      const Icon(
-                        Icons.person_outline_rounded,
-                        size: 17,
-                        color: Color(0xFF71808A),
-                      ),
-                      const SizedBox(width: 7),
-                      Expanded(
-                        child: Text(
-                          course.lecturer,
-                          style: const TextStyle(fontSize: 12),
-                        ),
-                      ),
-                      Text(
-                        studentView ? 'Enrolled' : '${roster.length} students',
-                        style: const TextStyle(
-                          color: AppTheme.teal,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
-                  ),
-                  if (!studentView && roster.isNotEmpty) ...[
-                    const SizedBox(height: 12),
-                    ...roster
-                        .take(4)
-                        .map(
-                          (student) => Padding(
-                            padding: const EdgeInsets.only(top: 8),
-                            child: Row(
-                              children: [
-                                CircleAvatar(
-                                  radius: 14,
-                                  backgroundColor: const Color(0xFFF1F3F3),
-                                  child: Text(
-                                    student.name.characters.first,
-                                    style: const TextStyle(
-                                      fontSize: 11,
-                                      color: AppTheme.ink,
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 9),
-                                Expanded(
-                                  child: Text(
-                                    student.name,
-                                    style: const TextStyle(fontSize: 12),
-                                  ),
-                                ),
-                                Text(
-                                  student.matricNumber,
-                                  style: const TextStyle(
-                                    fontSize: 10,
-                                    color: Color(0xFF87939A),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                  ],
-                  if (state.openSessionCourseId == course.id)
-                    const Padding(
-                      padding: EdgeInsets.only(top: 12),
-                      child: _Pill(
-                        label: 'Attendance session open',
-                        color: Color(0xFFE9F3F1),
-                        textColor: AppTheme.teal,
-                      ),
-                    ),
-                ],
-              ),
+              ],
             ),
-          );
-        },
-      );
+            const SizedBox(height: 8),
+            Text(
+              '${courses.length} course${courses.length == 1 ? '' : 's'} available',
+              style: TextStyle(color: Colors.grey.shade600),
+            ),
+            const SizedBox(height: 20),
+            if (courses.isEmpty)
+              _EmptyState(
+                icon: Icons.menu_book_outlined,
+                title: 'No courses available',
+                message: isLecturer
+                    ? 'Add your first course to get started.'
+                    : 'Your assigned courses will appear here.',
+                actionLabel: isLecturer ? 'Create course' : null,
+                onAction: isLecturer ? onAddCourse : null,
+              )
+            else
+              ...courses.map(
+                (course) => _CourseCard(
+                  course: course,
+                  isOpen: course.id == state.openSessionCourseId,
+                  isLecturer: isLecturer,
+                  onToggleSession: isLecturer
+                      ? () => context.read<UniversityBloc>().add(
+                            AttendanceSessionToggled(course.id),
+                          )
+                      : null,
+                ),
+              ),
+            if (isLecturer && courses.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              _ActionTile(
+                icon: Icons.person_add_alt_1_rounded,
+                title: 'Enroll a student',
+                subtitle: 'Register a student for a course.',
+                onTap: onAddStudent,
+              ),
+            ],
+          ],
+        );
+      },
+    );
+  }
 }
 
 class _AttendancePage extends StatelessWidget {
-  const _AttendancePage({required this.role, this.onEnrollFace});
+  const _AttendancePage({required this.role, required this.universityId});
+
   final UniversityRole role;
-  final void Function(String studentId)? onEnrollFace;
+  final String universityId;
+
+  Future<void> _requestEnrollment(BuildContext context) async {
+    final state = context.read<UniversityBloc>().state;
+    final students = state.students.where((s) => s.userId != null && s.userId!.isNotEmpty).toList();
+
+    if (students.isEmpty) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No students with linked Firebase accounts found. Students must sign in first to link their account.')),
+        );
+      }
+      return;
+    }
+
+    final selectedStudent = await showDialog<UniversityStudent>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Select student to enroll'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: ListView.builder(
+            shrinkWrap: true,
+            itemCount: students.length,
+            itemBuilder: (_, index) {
+              final student = students[index];
+              return ListTile(
+                title: Text(student.name),
+                subtitle: Text('Matric: ${student.matricNumber}'),
+                onTap: () => Navigator.pop(dialogContext, student),
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+        ],
+      ),
+    );
+
+    if (selectedStudent == null || !context.mounted) return;
+
+    // Use the student's Firebase Auth UID (userId) for enrollment
+    final faceEnrollmentId = selectedStudent.userId!;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        icon: const Icon(
+          Icons.face_retouching_natural_rounded,
+          size: 38,
+          color: AppTheme.teal,
+        ),
+        title: Text('Enroll face for ${selectedStudent.name}'),
+        content: const Text(
+          'This will start the camera to capture the student\'s face '
+          'and create a biometric profile for attendance. '
+          'The student should be present and positioned in front of the camera.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Continue'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !context.mounted) return;
+
+    // Get the liveness service from the bloc's data source
+    final bloc = context.read<UniversityBloc>();
+    final livenessService = bloc.dataSource.livenessService;
+
+    // Launch the enrollment screen
+    final enrolled = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => FaceEnrollmentScreen(
+          userId: faceEnrollmentId,
+          universityId: universityId,
+          livenessService: livenessService,
+        ),
+      ),
+    );
+
+    if (!context.mounted) return;
+
+    if (enrolled == true) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Face enrolled successfully for ${selectedStudent.name}.')),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Face enrollment was cancelled or failed.')),
+      );
+    }
+  }
 
   @override
-  Widget build(
-    BuildContext context,
-  ) => BlocBuilder<UniversityBloc, UniversityState>(
-    builder: (context, state) {
-      final bloc = context.read<UniversityBloc>();
-      final isLecturer = role == UniversityRole.lecturer;
-      final student = state.students.isEmpty ? null : state.students.first;
-      final courses = isLecturer
-          ? state.courses
-          : student == null
-          ? const <Course>[]
-          : state.courses
-                .where((course) => course.id == student.courseId)
-                .toList();
-      final visibleEntries = isLecturer
-          ? state.entries
-          : student == null
-          ? const <AttendanceEntry>[]
-          : state.entries
-                .where((entry) => entry.studentId == student.id)
-                .toList();
+  Widget build(BuildContext context) {
+    final isLecturer = role == UniversityRole.lecturer;
 
-      return ListView(
-        padding: const EdgeInsets.all(20),
-        children: [
-          _PageTitle(
-            title: isLecturer ? 'Attendance' : 'My attendance',
-            subtitle: isLecturer
-                ? 'Open course sessions and monitor check-ins'
-                : 'Identity verification is required for attendance',
-          ),
-          const SizedBox(height: 18),
-          if (isLecturer) ...[
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(17),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Course sessions',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 5),
-                    const Text(
-                      'Open attendance for a lecture, then monitor student check-ins.',
-                      style: TextStyle(fontSize: 12, color: Color(0xFF78858C)),
-                    ),
-                    const SizedBox(height: 14),
-                    ...courses.map(
-                      (course) => _LecturerSessionRow(
-                        course: course,
-                        isOpen: state.openSessionCourseId == course.id,
-                        onToggle: () =>
-                            bloc.add(AttendanceSessionToggled(course.id)),
-                      ),
-                    ),
-                  ],
+    return BlocBuilder<UniversityBloc, UniversityState>(
+      builder: (context, state) {
+        final openCourse = state.openSessionCourseId == null
+            ? null
+            : state.courses
+                  .where((course) => course.id == state.openSessionCourseId)
+                  .firstOrNull;
+
+        return ListView(
+          padding: const EdgeInsets.all(20),
+          children: [
+            Text(
+              'Attendance',
+              style: Theme.of(context).textTheme.headlineSmall
+                  ?.copyWith(fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Attendance sessions and face verification.',
+              style: TextStyle(color: Colors.grey.shade600),
+            ),
+            const SizedBox(height: 24),
+            Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: openCourse != null
+                    ? const Color(0xFFE5F5EE)
+                    : const Color(0xFFF1F4F6),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: openCourse != null
+                      ? const Color(0xFF9BD6BB)
+                      : const Color(0xFFDDE4E8),
                 ),
               ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(
+                    openCourse != null
+                        ? Icons.radio_button_checked_rounded
+                        : Icons.event_available_outlined,
+                    size: 34,
+                    color: openCourse != null
+                        ? Colors.green.shade800
+                        : Colors.blueGrey,
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    openCourse != null
+                        ? 'Attendance session active'
+                        : 'No active session',
+                    style: const TextStyle(
+                      fontSize: 19,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    openCourse != null
+                        ? 'An attendance session is open for ${openCourse.name}.'
+                        : 'When a lecturer opens a session, its status will appear here.',
+                    style: TextStyle(color: Colors.grey.shade700, height: 1.5),
+                  ),
+                ],
+              ),
             ),
-            const SizedBox(height: 16),
-          ] else ...[
-            if (courses.isEmpty)
-              const _EmptyCard(
-                icon: Icons.menu_book_outlined,
-                title: 'No courses yet',
-                subtitle: 'Contact your university admin to enroll in courses.',
+            const SizedBox(height: 24),
+            const _SectionHeading(title: 'Face verification'),
+            const SizedBox(height: 12),
+            _InfoCard(
+              icon: Icons.face_retouching_natural_rounded,
+              title: 'Biometric enrollment',
+              message: isLecturer
+                  ? 'Start face enrollment for a student using their Firebase UID.'
+                  : 'Face verification is available through the configured biometric service.',
+            ),
+            if (isLecturer) ...[
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed: () => _requestEnrollment(context),
+                  icon: const Icon(Icons.face_rounded),
+                  label: const Text('Enroll student face'),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: AppTheme.teal,
+                    padding: const EdgeInsets.symmetric(vertical: 15),
+                  ),
+                ),
+              ),
+            ],
+            const SizedBox(height: 24),
+            const _SectionHeading(title: 'Course sessions'),
+            const SizedBox(height: 12),
+            if (state.courses.isEmpty)
+              const _EmptyState(
+                icon: Icons.event_busy_outlined,
+                title: 'No courses found',
+                message: 'Course sessions will appear here when courses are available.',
               )
             else
-              ...courses.map((course) {
-                final isOpen = state.openSessionCourseId == course.id;
-                // For now, we show the enroll face button always.
-                // In a future version, we could track enrollment status in Firestore.
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: _AttendanceStateCard(
-                    courseName: course.name,
-                    isOpen: isOpen,
-                    hasEnrolledFace: false, // TODO: Track enrollment status
-                    onEnrollFace: () => onEnrollFace?.call(student!.id),
-                    onCheckIn: () => bloc.add(const StudentCheckInRequested()),
-                  ),
-                );
-              }),
-          ],
-          _SectionHeading(
-            title: isLecturer
-                ? 'Recent student check-ins'
-                : 'My recent check-ins',
-            trailing: '${visibleEntries.length}',
-          ),
-          const SizedBox(height: 10),
-          if (visibleEntries.isEmpty)
-            _EmptyCard(
-              icon: Icons.fact_check_outlined,
-              title: 'No check-ins yet',
-              subtitle: isLecturer
-                  ? 'Open a course session to start taking attendance.'
-                  : 'Your check-ins will appear here.',
-            ),
-          ...visibleEntries.reversed.map((entry) {
-            final attendees = state.students
-                .where((item) => item.id == entry.studentId)
-                .toList();
-            final attendee = attendees.isEmpty ? null : attendees.first;
-            final matchingCourses = state.courses
-                .where((item) => item.id == entry.courseId)
-                .toList();
-            final course = matchingCourses.isEmpty
-                ? null
-                : matchingCourses.first;
-            return Padding(
-              padding: const EdgeInsets.only(bottom: 9),
-              child: Card(
-                child: ListTile(
-                  leading: CircleAvatar(
-                    backgroundColor: const Color(0xFFE9F3F1),
-                    child: Text(
-                      attendee == null || attendee.name.isEmpty
-                          ? '?'
-                          : attendee.name.characters.first,
-                      style: const TextStyle(color: AppTheme.teal),
-                    ),
-                  ),
-                  title: Text(
-                    isLecturer
-                        ? attendee?.name ?? 'Student'
-                        : course?.name ?? 'Course',
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w600,
-                      fontSize: 13,
-                    ),
-                  ),
-                  subtitle: Text(
-                    isLecturer
-                        ? '${course?.name ?? 'Course'} · ${entry.source}'
-                        : 'Check-in recorded for today',
-                    style: const TextStyle(fontSize: 11),
-                  ),
-                  trailing: Text(
-                    DateFormat.jm().format(entry.checkedAt),
-                    style: const TextStyle(
-                      color: Color(0xFF78858C),
-                      fontSize: 12,
-                    ),
-                  ),
+              ...state.courses.map(
+                (course) => _CourseCard(
+                  course: course,
+                  isOpen: course.id == state.openSessionCourseId,
+                  isLecturer: isLecturer,
+                  onToggleSession: isLecturer
+                      ? () => context.read<UniversityBloc>().add(
+                            AttendanceSessionToggled(course.id),
+                          )
+                      : null,
                 ),
               ),
-            );
-          }),
-          const SizedBox(height: 8),
-        ],
-      );
-    },
-  );
-}
-
-class _LecturerSessionRow extends StatelessWidget {
-  const _LecturerSessionRow({
-    required this.course,
-    required this.isOpen,
-    required this.onToggle,
-  });
-  final Course course;
-  final bool isOpen;
-  final VoidCallback onToggle;
-
-  @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.only(bottom: 8),
-    child: Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF7F9F8),
-        borderRadius: BorderRadius.circular(14),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  course.name,
-                  style: const TextStyle(fontWeight: FontWeight.w600),
-                ),
-                Text(
-                  course.schedule,
-                  style: const TextStyle(
-                    fontSize: 11,
-                    color: Color(0xFF7F8B91),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          FilledButton.tonal(
-            onPressed: onToggle,
-            style: FilledButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 13),
-              visualDensity: VisualDensity.compact,
-            ),
-            child: Text(isOpen ? 'End session' : 'Open session'),
-          ),
-        ],
-      ),
-    ),
-  );
+          ],
+        );
+      },
+    );
+  }
 }
 
 class _ReportsPage extends StatelessWidget {
   const _ReportsPage({required this.role});
+
   final UniversityRole role;
 
   @override
-  Widget build(BuildContext context) =>
-      BlocBuilder<UniversityBloc, UniversityState>(
-        builder: (context, state) {
-          final isLecturer = role == UniversityRole.lecturer;
-          final student = state.students.isEmpty ? null : state.students.first;
-          final total = isLecturer
-              ? state.students.length
-              : (student == null ? 0 : 1);
-          final present = isLecturer
-              ? state.entries.length
-              : student == null
-              ? 0
-              : state.entries
-                    .where((entry) => entry.studentId == student.id)
-                    .length;
-          final percent = total == 0 ? 0 : (present * 100 / total).round();
-          final courses = isLecturer
-              ? state.courses
-              : student == null
-              ? const <Course>[]
-              : state.courses
-                    .where((course) => course.id == student.courseId)
-                    .toList();
+  Widget build(BuildContext context) {
+    return BlocBuilder<UniversityBloc, UniversityState>(
+      builder: (context, state) {
+        final courses = state.courses;
+        final openSessions = state.openSessionCourseId == null ? 0 : 1;
+        final isLecturer = role == UniversityRole.lecturer;
 
-          return ListView(
-            padding: const EdgeInsets.all(20),
-            children: [
-              _PageTitle(
-                title: isLecturer ? 'Reports' : 'My attendance record',
-                subtitle: isLecturer
-                    ? 'A quick view of attendance across your courses'
-                    : 'Your attendance for the current semester',
-              ),
-              const SizedBox(height: 18),
-              Container(
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  color: AppTheme.ink,
-                  borderRadius: BorderRadius.circular(22),
+        return ListView(
+          padding: const EdgeInsets.all(20),
+          children: [
+            Text(
+              'Reports',
+              style: Theme.of(context).textTheme.headlineSmall
+                  ?.copyWith(fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Review the university information currently available.',
+              style: TextStyle(color: Colors.grey.shade600),
+            ),
+            const SizedBox(height: 24),
+            GridView.count(
+              crossAxisCount: 2,
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              crossAxisSpacing: 12,
+              mainAxisSpacing: 12,
+              childAspectRatio: 1.25,
+              children: [
+                _DashboardMetric(
+                  title: 'Total courses',
+                  value: '${courses.length}',
+                  icon: Icons.menu_book_rounded,
+                  color: AppTheme.teal,
                 ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      isLecturer ? 'TODAY · UNIVERSITY' : 'MY ATTENDANCE',
-                      style: const TextStyle(
-                        color: Color(0xFFB9C8CE),
-                        fontSize: 11,
-                        letterSpacing: 1.2,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    Text(
-                      '$percent%',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 42,
-                        height: 1,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      isLecturer
-                          ? '$present present from $total registered students'
-                          : present == 0
-                          ? 'No check-in recorded today'
-                          : 'You checked in today',
-                      style: const TextStyle(
-                        color: Color(0xFFCFD9DC),
-                        fontSize: 13,
-                      ),
-                    ),
-                  ],
+                _DashboardMetric(
+                  title: 'Open sessions',
+                  value: '$openSessions',
+                  icon: Icons.fact_check_outlined,
+                  color: Colors.green.shade700,
+                ),
+              ],
+            ),
+            const SizedBox(height: 24),
+            const _SectionHeading(title: 'Course overview'),
+            const SizedBox(height: 12),
+            if (courses.isEmpty)
+              const _EmptyState(
+                icon: Icons.bar_chart_rounded,
+                title: 'No report data yet',
+                message: 'Course information will appear here when available.',
+              )
+            else
+              ...courses.map(
+                (course) => _CourseCard(
+                  course: course,
+                  isOpen: course.id == state.openSessionCourseId,
+                  isLecturer: isLecturer,
+                  onToggleSession: isLecturer
+                      ? () => context.read<UniversityBloc>().add(
+                            AttendanceSessionToggled(course.id),
+                          )
+                      : null,
                 ),
               ),
-              const SizedBox(height: 20),
-              _SectionHeading(title: isLecturer ? 'By course' : 'My course'),
-              const SizedBox(height: 10),
-              ...courses.map((course) {
-                final count = context
-                    .read<UniversityBloc>()
-                    .state
-                    .studentsFor(course.id)
-                    .length;
-                final here = context.read<UniversityBloc>().state.presentFor(
-                  course.id,
-                );
-                final value = isLecturer
-                    ? (count == 0 ? 0.0 : here / count)
-                    : (here > 0 ? 1.0 : 0.0);
-                final status = isLecturer
-                    ? '$here / $count'
-                    : here > 0
-                    ? 'Present'
-                    : 'No record';
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 10),
-                  child: Card(
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Column(
-                        children: [
-                          Row(
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  course.name,
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                              ),
-                              Text(
-                                status,
-                                style: const TextStyle(
-                                  color: Color(0xFF78858C),
-                                  fontSize: 12,
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 12),
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(10),
-                            child: LinearProgressIndicator(
-                              value: value,
-                              minHeight: 7,
-                              backgroundColor: const Color(0xFFEDF1EF),
-                              valueColor: const AlwaysStoppedAnimation(
-                                AppTheme.teal,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                );
-              }),
-              const SizedBox(height: 8),
-            ],
-          );
-        },
-      );
+            const SizedBox(height: 16),
+            const _InfoCard(
+              icon: Icons.insights_rounded,
+              title: 'Detailed attendance analytics',
+              message: 'Attendance percentages, historical session records, and downloadable reports require attendance records from the university data layer.',
+            ),
+          ],
+        );
+      },
+    );
+  }
 }
 
 class _StudentsPage extends StatelessWidget {
   const _StudentsPage();
 
   @override
-  Widget build(BuildContext context) => BlocBuilder<UniversityBloc, UniversityState>(
-        builder: (context, state) {
-          final students = state.students;
-          final courses = {for (final c in state.courses) c.id: c.name};
-
-          // Group students by course
-          final studentsByCourse = <String, List<UniversityStudent>>{};
-          for (final student in students) {
-            studentsByCourse.putIfAbsent(student.courseId, () => <UniversityStudent>[]).add(student);
-          }
-
-          return ListView(
-            padding: const EdgeInsets.all(20),
-            children: [
-              _PageTitle(
-                title: 'All Students',
-                subtitle: 'View students grouped by their enrolled courses',
-              ),
-              const SizedBox(height: 18),
-              if (students.isEmpty)
-                _EmptyCard(
-                  icon: Icons.people_alt_outlined,
-                  title: 'No students yet',
-                  subtitle: 'Use "Enroll student" on the Overview page to add students.',
-                )
-              else ...[
-                ...studentsByCourse.entries.map((entry) {
-                  final courseName = courses[entry.key] ?? entry.key;
-                  final courseStudents = entry.value;
-                  return Padding(
-                    padding: const EdgeInsets.only(bottom: 16),
-                    child: Card(
-                      child: Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Container(
-                                  width: 36,
-                                  height: 36,
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFFE8F3F1),
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                  child: const Icon(
-                                    Icons.menu_book_rounded,
-                                    color: AppTheme.teal,
-                                    size: 18,
-                                  ),
-                                ),
-                                const SizedBox(width: 10),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        courseName,
-                                        style: const TextStyle(
-                                          fontWeight: FontWeight.w700,
-                                          fontSize: 15,
-                                        ),
-                                      ),
-                                      Text(
-                                        '${courseStudents.length} student(s)',
-                                        style: const TextStyle(
-                                          color: Color(0xFF7B888F),
-                                          fontSize: 11,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 12),
-                            ...courseStudents.map<Widget>((UniversityStudent student) => Padding(
-                              padding: const EdgeInsets.only(bottom: 10),
-                              child: Row(
-                                children: [
-                                  CircleAvatar(
-                                    radius: 18,
-                                    backgroundColor: const Color(0xFFF1F3F3),
-                                    child: Text(
-                                      student.name.characters.first,
-                                      style: const TextStyle(
-                                        fontSize: 13,
-                                        color: AppTheme.ink,
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 12),
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          student.name,
-                                          style: const TextStyle(
-                                            fontWeight: FontWeight.w600,
-                                            fontSize: 13,
-                                          ),
-                                        ),
-                                        Text(
-                                          'Matric: ${student.matricNumber.isEmpty ? 'N/A' : student.matricNumber}',
-                                          style: const TextStyle(
-                                            color: Color(0xFF78858C),
-                                            fontSize: 11,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                  if (student.userId != null)
-                                    const Icon(
-                                      Icons.verified_user_rounded,
-                                      color: AppTheme.teal,
-                                      size: 18,
-                                    )
-                                  else
-                                    const Icon(
-                                      Icons.person_outline_rounded,
-                                      color: Color(0xFF9AA8AC),
-                                      size: 18,
-                                    ),
-                                ],
-                              ),
-                            )),
-                          ],
-                        ),
-                      ),
-                    ),
-                  );
-                }),
-              ],
-              const SizedBox(height: 8),
-            ],
-          );
-        },
-      );
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.all(20),
+      children: [
+        Text(
+          'Students',
+          style: Theme.of(context).textTheme.headlineSmall
+              ?.copyWith(fontWeight: FontWeight.w800),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'Student enrollment and biometric setup.',
+          style: TextStyle(color: Colors.grey.shade600),
+        ),
+        const SizedBox(height: 24),
+        const _InfoCard(
+          icon: Icons.people_alt_outlined,
+          title: 'Student management',
+          message: 'Use Enroll a student on the Courses page to register a student. A full student directory requires the student list in UniversityState.',
+        ),
+        const SizedBox(height: 12),
+        const _InfoCard(
+          icon: Icons.face_retouching_natural_rounded,
+          title: 'Face enrollment',
+          message: 'Use the Attendance page to start biometric enrollment for an existing student.',
+        ),
+      ],
+    );
+  }
 }
 
-class _CourseTile extends StatelessWidget {
-  const _CourseTile({
-    required this.course,
-    required this.rosterSize,
-    required this.presentCount,
-    required this.studentView,
+class _DashboardMetric extends StatelessWidget {
+  const _DashboardMetric({
+    required this.title,
+    required this.value,
+    required this.icon,
+    required this.color,
   });
-  final Course course;
-  final int rosterSize;
-  final int presentCount;
-  final bool studentView;
+
+  final String title;
+  final String value;
+  final IconData icon;
+  final Color color;
+
   @override
-  Widget build(BuildContext context) => Card(
-    child: Padding(
-      padding: const EdgeInsets.all(14),
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Theme.of(context).cardColor,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Colors.grey.withValues(alpha: 0.15)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Icon(icon, color: color, size: 25),
+          const SizedBox(height: 8),
+          Text(
+            value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 21, fontWeight: FontWeight.w800),
+          ),
+          Text(
+            title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SectionHeading extends StatelessWidget {
+  const _SectionHeading({required this.title});
+
+  final String title;
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      title,
+      style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+    );
+  }
+}
+
+class _CourseCard extends StatelessWidget {
+  const _CourseCard({
+    required this.course,
+    required this.isOpen,
+    this.onToggleSession,
+    this.isLecturer = false,
+  });
+
+  final Course course;
+  final bool isOpen;
+  final VoidCallback? onToggleSession;
+  final bool isLecturer;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Theme.of(context).cardColor,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: isOpen
+              ? AppTheme.teal.withValues(alpha: 0.6)
+              : Colors.grey.withValues(alpha: 0.18),
+        ),
+      ),
       child: Row(
         children: [
           Container(
-            width: 40,
-            height: 40,
+            width: 48,
+            height: 48,
             decoration: BoxDecoration(
-              color: const Color(0xFFEEF0FA),
-              borderRadius: BorderRadius.circular(13),
+              color: AppTheme.teal.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(14),
             ),
-            child: const Icon(
-              Icons.menu_book_rounded,
-              color: Color(0xFF636BA9),
-              size: 20,
-            ),
+            child: const Icon(Icons.menu_book_rounded, color: AppTheme.teal),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 14),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1371,472 +1460,225 @@ class _CourseTile extends StatelessWidget {
                   course.name,
                   style: const TextStyle(
                     fontWeight: FontWeight.w700,
-                    color: AppTheme.ink,
+                    fontSize: 15,
                   ),
                 ),
+                const SizedBox(height: 6),
                 Text(
-                  '${course.lecturer} · ${course.schedule}',
-                  style: const TextStyle(
-                    fontSize: 11,
-                    color: Color(0xFF7C898F),
+                  isOpen ? 'Attendance session active' : 'Course',
+                  style: TextStyle(
+                    color: isOpen ? AppTheme.teal : Colors.grey.shade600,
+                    fontSize: 12,
+                    fontWeight: isOpen ? FontWeight.w600 : FontWeight.normal,
                   ),
                 ),
               ],
             ),
           ),
-          if (studentView)
-            const _Pill(
-              label: 'Enrolled',
-              color: Color(0xFFE9F3F1),
-              textColor: AppTheme.teal,
-            )
+          if (isLecturer && onToggleSession != null) ...[
+            const SizedBox(width: 8),
+            FilledButton.icon(
+              onPressed: onToggleSession,
+              icon: Icon(isOpen ? Icons.stop_circle_rounded : Icons.play_circle_fill_rounded, size: 18),
+              label: Text(isOpen ? 'Close session' : 'Open session'),
+              style: FilledButton.styleFrom(
+                backgroundColor: isOpen ? Colors.red.shade600 : AppTheme.teal,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              ),
+            ),
+          ] else if (isOpen)
+            const Icon(Icons.radio_button_checked_rounded, color: AppTheme.teal)
           else
-            _Pill(
-              label: '$presentCount / $rosterSize',
-              color: const Color(0xFFE9F3F1),
-              textColor: AppTheme.teal,
-            ),
+            Icon(Icons.chevron_right_rounded, color: Colors.grey.shade500),
         ],
       ),
-    ),
-  );
+    );
+  }
 }
 
-class _SectionHeading extends StatelessWidget {
-  const _SectionHeading({required this.title, this.trailing});
-  final String title;
-  final String? trailing;
-  @override
-  Widget build(BuildContext context) => Row(
-    children: [
-      Expanded(
-        child: Text(
-          title,
-          style: const TextStyle(
-            color: AppTheme.ink,
-            fontWeight: FontWeight.w700,
-            fontSize: 16,
-          ),
-        ),
-      ),
-      if (trailing != null)
-        Text(
-          trailing!,
-          style: const TextStyle(color: Color(0xFF839097), fontSize: 12),
-        ),
-    ],
-  );
-}
-
-class _PageTitle extends StatelessWidget {
-  const _PageTitle({required this.title, required this.subtitle});
-  final String title;
-  final String subtitle;
-  @override
-  Widget build(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      Text(
-        title,
-        style: const TextStyle(
-          fontSize: 27,
-          fontWeight: FontWeight.w800,
-          color: AppTheme.ink,
-          letterSpacing: -.6,
-        ),
-      ),
-      const SizedBox(height: 3),
-      Text(
-        subtitle,
-        style: const TextStyle(fontSize: 13, color: Color(0xFF78858C)),
-      ),
-    ],
-  );
-}
-
-class _StatCard extends StatelessWidget {
-  const _StatCard({
-    required this.icon,
-    required this.label,
-    required this.value,
-    required this.tint,
-  });
-  final IconData icon;
-  final String label;
-  final String value;
-  final Color tint;
-  @override
-  Widget build(BuildContext context) => Card(
-    child: Padding(
-      padding: const EdgeInsets.fromLTRB(12, 13, 8, 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: 30,
-            height: 30,
-            decoration: BoxDecoration(
-              color: tint,
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Icon(icon, size: 17, color: AppTheme.teal),
-          ),
-          const SizedBox(height: 11),
-          Text(
-            value,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.w800,
-              color: AppTheme.ink,
-            ),
-          ),
-          Text(
-            label,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontSize: 11, color: Color(0xFF78858C)),
-          ),
-        ],
-      ),
-    ),
-  );
-}
-
-class _QuickAction extends StatelessWidget {
-  const _QuickAction({
-    required this.icon,
-    required this.label,
-    required this.onTap,
-  });
-  final IconData icon;
-  final String label;
-  final VoidCallback onTap;
-  @override
-  Widget build(BuildContext context) => InkWell(
-    onTap: onTap,
-    borderRadius: BorderRadius.circular(16),
-    child: Card(
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Row(
-          children: [
-            Container(
-              width: 38,
-              height: 38,
-              decoration: BoxDecoration(
-                color: const Color(0xFFE9F3F1),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Icon(icon, color: AppTheme.teal, size: 20),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                label,
-                style: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: AppTheme.ink,
-                ),
-              ),
-            ),
-            const Icon(
-              Icons.arrow_forward_ios_rounded,
-              size: 13,
-              color: Color(0xFF98A4A7),
-            ),
-          ],
-        ),
-      ),
-    ),
-  );
-}
-
-class _Pill extends StatelessWidget {
-  const _Pill({
-    required this.label,
-    required this.color,
-    required this.textColor,
-  });
-  final String label;
-  final Color color;
-  final Color textColor;
-  @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
-    decoration: BoxDecoration(
-      color: color,
-      borderRadius: BorderRadius.circular(30),
-    ),
-    child: Text(
-      label,
-      style: TextStyle(
-        color: textColor,
-        fontSize: 10,
-        fontWeight: FontWeight.w600,
-      ),
-    ),
-  );
-}
-
-class _EmptyCard extends StatelessWidget {
-  const _EmptyCard({
+class _ActionTile extends StatelessWidget {
+  const _ActionTile({
     required this.icon,
     required this.title,
     required this.subtitle,
+    required this.onTap,
   });
+
   final IconData icon;
   final String title;
   final String subtitle;
+  final VoidCallback onTap;
+
   @override
-  Widget build(BuildContext context) => Card(
-    child: Padding(
+  Widget build(BuildContext context) {
+    return Card(
+      margin: const EdgeInsets.only(bottom: 10),
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(color: Colors.grey.withValues(alpha: 0.15)),
+      ),
+      child: ListTile(
+        onTap: onTap,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
+        leading: Container(
+          width: 44,
+          height: 44,
+          decoration: BoxDecoration(
+            color: AppTheme.teal.withValues(alpha: 0.1),
+            borderRadius: BorderRadius.circular(13),
+          ),
+          child: Icon(icon, color: AppTheme.teal),
+        ),
+        title: Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
+        subtitle: Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: Text(subtitle),
+        ),
+        trailing: const Icon(Icons.arrow_forward_ios_rounded, size: 15),
+      ),
+    );
+  }
+}
+
+class _EmptyState extends StatelessWidget {
+  const _EmptyState({
+    required this.icon,
+    required this.title,
+    required this.message,
+    this.actionLabel,
+    this.onAction,
+  });
+
+  final IconData icon;
+  final String title;
+  final String message;
+  final String? actionLabel;
+  final VoidCallback? onAction;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
       padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: Theme.of(context).cardColor,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Colors.grey.withValues(alpha: 0.15)),
+      ),
       child: Column(
         children: [
-          Icon(icon, color: const Color(0xFF91A09F), size: 32),
-          const SizedBox(height: 9),
-          Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
-          const SizedBox(height: 4),
+          Icon(icon, size: 42, color: Colors.grey.shade500),
+          const SizedBox(height: 12),
           Text(
-            subtitle,
+            title,
             textAlign: TextAlign.center,
-            style: const TextStyle(color: Color(0xFF78858C), fontSize: 12),
+            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            message,
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Colors.grey.shade600, height: 1.5),
+          ),
+          if (actionLabel != null && onAction != null) ...[
+            const SizedBox(height: 16),
+            FilledButton(onPressed: onAction, child: Text(actionLabel!)),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _InfoCard extends StatelessWidget {
+  const _InfoCard({
+    required this.icon,
+    required this.title,
+    required this.message,
+  });
+
+  final IconData icon;
+  final String title;
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(17),
+      decoration: BoxDecoration(
+        color: Theme.of(context).cardColor,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Colors.grey.withValues(alpha: 0.15)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: AppTheme.teal, size: 27),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(fontWeight: FontWeight.w800),
+                ),
+                const SizedBox(height: 7),
+                Text(
+                  message,
+                  style: TextStyle(color: Colors.grey.shade600, height: 1.5),
+                ),
+              ],
+            ),
           ),
         ],
       ),
-    ),
-  );
+    );
+  }
 }
 
-Future<List<String>?> _textFields(
-  BuildContext context, {
-  required String title,
-  required List<(String, String)> fields,
-}) async {
-  final controllers = fields.map((_) => TextEditingController()).toList();
-  final result = await showDialog<List<String>>(
-    context: context,
-    builder: (dialogContext) => AlertDialog(
-      title: Text(title),
-      content: SingleChildScrollView(
+class _ErrorState extends StatelessWidget {
+  const _ErrorState({required this.message, required this.onRetry});
+
+  final String message;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(28),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            for (var i = 0; i < fields.length; i++)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: TextField(
-                  controller: controllers[i],
-                  textCapitalization: TextCapitalization.words,
-                  decoration: InputDecoration(
-                    labelText: fields[i].$1,
-                    hintText: fields[i].$2,
-                  ),
-                ),
-              ),
+            const Icon(
+              Icons.cloud_off_rounded,
+              size: 52,
+              color: Colors.blueGrey,
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'Unable to load dashboard',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.grey.shade600),
+            ),
+            const SizedBox(height: 20),
+            FilledButton.icon(
+              onPressed: onRetry,
+              icon: const Icon(Icons.refresh_rounded),
+              label: const Text('Try again'),
+            ),
           ],
         ),
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(dialogContext),
-          child: const Text('Cancel'),
-        ),
-        FilledButton(
-          onPressed: () => Navigator.pop(
-            dialogContext,
-            controllers.map((controller) => controller.text.trim()).toList(),
-          ),
-          child: const Text('Save'),
-        ),
-      ],
-    ),
-  );
-  for (final controller in controllers) {
-    controller.dispose();
+    );
   }
-  return result;
-}
-
-Future<List<String>?> _studentFields(
-  BuildContext context,
-  List<Course> courses,
-) async {
-  if (courses.isEmpty) return null;
-  final name = TextEditingController();
-  final matric = TextEditingController();
-  var courseId = courses.first.id;
-  final result = await showDialog<List<String>>(
-    context: context,
-    builder: (dialogContext) => StatefulBuilder(
-      builder: (context, setState) => AlertDialog(
-        title: const Text('Enroll a student'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: name,
-              textCapitalization: TextCapitalization.words,
-              decoration: const InputDecoration(labelText: 'Student name'),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: matric,
-              textCapitalization: TextCapitalization.characters,
-              decoration: const InputDecoration(labelText: 'Matric number'),
-            ),
-            const SizedBox(height: 12),
-            DropdownButtonFormField<String>(
-              initialValue: courseId,
-              decoration: const InputDecoration(labelText: 'Course'),
-              items: courses
-                  .map(
-                    (course) => DropdownMenuItem(
-                      value: course.id,
-                      child: Text(course.name),
-                    ),
-                  )
-                  .toList(),
-              onChanged: (value) {
-                if (value != null) setState(() => courseId = value);
-              },
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, [
-              name.text.trim(),
-              matric.text.trim(),
-              courseId,
-            ]),
-            child: const Text('Enroll'),
-          ),
-        ],
-      ),
-    ),
-  );
-  name.dispose();
-  matric.dispose();
-  return result;
-}
-
-class _AttendanceStateCard extends StatelessWidget {
-  const _AttendanceStateCard({
-    required this.courseName,
-    required this.isOpen,
-    required this.hasEnrolledFace,
-    required this.onEnrollFace,
-    required this.onCheckIn,
-  });
-
-  final String courseName;
-  final bool isOpen;
-  final bool hasEnrolledFace;
-  final VoidCallback onEnrollFace;
-  final VoidCallback onCheckIn;
-
-  @override
-  Widget build(BuildContext context) => Card(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(
-                courseName,
-                style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
-              ),
-              const SizedBox(height: 16),
-              if (!hasEnrolledFace) ...[
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFFF3E0),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: const Color(0xFFFFB74D)),
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.face_outlined, color: Color(0xFFE65100), size: 20),
-                      const SizedBox(width: 12),
-                      const Expanded(
-                        child: Text(
-                          'Face not enrolled yet. Enroll your face first to enable attendance verification.',
-                          style: TextStyle(
-                            color: Color(0xFFE65100),
-                            fontSize: 13,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ),
-                      FilledButton.tonal(
-                        onPressed: onEnrollFace,
-                        style: FilledButton.styleFrom(
-                          backgroundColor: const Color(0xFFFFB74D),
-                          foregroundColor: Colors.white,
-                        ),
-                        child: const Text('Enroll Face'),
-                      ),
-                    ],
-                  ),
-                ),
-              ] else if (!isOpen) ...[
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFE8F5E9),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: const Color(0xFF81C784)),
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.schedule_rounded, color: Color(0xFF2E7D32), size: 20),
-                      const SizedBox(width: 12),
-                      const Expanded(
-                        child: Text(
-                          'No open session. Your lecturer will open the session when class starts.',
-                          style: TextStyle(
-                            color: Color(0xFF2E7D32),
-                            fontSize: 13,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ] else ...[
-                FilledButton.icon(
-                  onPressed: onCheckIn,
-                  icon: const Icon(Icons.fingerprint_rounded, size: 20),
-                  label: const Text('Verify Face & Check In'),
-                  style: FilledButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    backgroundColor: AppTheme.teal,
-                    foregroundColor: Colors.white,
-                    textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'This will launch iProov face verification to confirm your identity.',
-                  style: TextStyle(
-                    color: Colors.grey.shade600,
-                    fontSize: 12,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-              ],
-            ],
-          ),
-        ),
-      );
 }

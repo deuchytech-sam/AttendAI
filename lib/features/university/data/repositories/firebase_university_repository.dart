@@ -33,5 +33,6 @@ class FirebaseUniversityRepository implements UniversityRepository {
       _dataSource.toggleSession(courseId);
 
   @override
-  Future<AttendanceActionResult> checkIn() => _dataSource.checkIn();
+  Future<AttendanceActionResult> checkIn({required String studentId}) =>
+      _dataSource.checkIn(studentId: studentId);
 }

@@ -1,30 +1,83 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../../../biometrics/domain/services/face_liveness_service.dart';
+import '../../../biometrics/data/repositories/face_liveness_biometric_repository.dart';
 
 import '../../../auth/domain/entities/university_account.dart';
-import '../../../biometrics/domain/services/biometric_attendance_service.dart';
 import '../../../university/domain/entities/university_role.dart';
 import '../../domain/entities/attendance_entry.dart';
 import '../../domain/entities/course.dart';
 import '../../domain/entities/university_dashboard.dart';
 import '../../domain/entities/university_student.dart';
 import '../../domain/repositories/university_repository.dart';
+import '../../presentation/university_event.dart';
 
 class FirestoreUniversityDataSource {
   FirestoreUniversityDataSource(
     this._firestore,
     this._account,
-    this._attendanceService,
+    this._biometricRepository,
   );
 
   final FirebaseFirestore _firestore;
   final UniversityAccount _account;
-  final BiometricAttendanceService _attendanceService;
+  final FaceLivenessBiometricRepository _biometricRepository;
+
+  /// Exposes the biometric repository for face enrollment/verification flows.
+  FaceLivenessBiometricRepository get biometricRepository => _biometricRepository;
+
+  /// Exposes the liveness service for direct widget usage.
+  FaceLivenessService get livenessService => _biometricRepository.livenessService;
+
+  /// The current user's UID.
+  String get userId => _account.uid;
 
   CollectionReference<Map<String, dynamic>> _collection(String name) =>
       _firestore
           .collection('universities')
           .doc(_account.universityId)
           .collection(name);
+
+  /// Stream of session changes for real-time updates (for students).
+  Stream<SessionStatusChanged?> watchSessionChanges() {
+    if (_account.role == UniversityRole.lecturer) {
+      // Lecturers don't need session notifications
+      return const Stream.empty();
+    }
+
+    final memberRef = _firestore
+        .doc('universities/${_account.universityId}/members/${_account.uid}');
+
+    return memberRef.snapshots().asyncExpand((memberDoc) {
+      final courseIds = (memberDoc.data()?['courseIds'] as List<dynamic>? ?? [])
+          .whereType<String>()
+          .toList();
+
+      if (courseIds.isEmpty) {
+        return const Stream.empty();
+      }
+
+      // Watch attendanceSessions for this student's courses
+      return _collection('attendanceSessions')
+          .where('courseId', whereIn: courseIds)
+          .where('status', isEqualTo: 'open')
+          .snapshots()
+          .map((snapshot) {
+        if (snapshot.docs.isEmpty) {
+          return null;
+        }
+        // Return the first open session (there should be at most one)
+        final session = snapshot.docs.first;
+        final data = session.data();
+        return SessionStatusChanged(
+          courseId: data['courseId'] as String? ?? '',
+          courseName: '', // Will be resolved by the bloc
+          isOpen: true,
+        );
+      });
+    });
+  }
 
   Future<UniversityDashboard> getDashboard() async {
     final courseQuery = await _loadCourses();
@@ -141,11 +194,9 @@ class FirestoreUniversityDataSource {
     return getDashboard();
   }
 
-  Future<AttendanceActionResult> checkIn() async {
-    final result = await _attendanceService.verifyOpenSession();
-    if (!result.recorded) {
-      throw StateError(result.message ?? 'Attendance was not recorded.');
-    }
+  Future<AttendanceActionResult> checkIn({required String studentId}) async {
+    // Verification is handled by FlutterFaceLiveness widget in FaceVerificationScreen.
+    // This method just records the attendance after successful verification.
     return AttendanceActionResult(
       dashboard: await getDashboard(),
       recorded: true,

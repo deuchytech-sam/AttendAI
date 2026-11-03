@@ -38,6 +38,24 @@ class UniversityState extends Equatable {
     actionMessage: actionMessage,
   );
 
+  UniversityState copyWith({
+    UniversityLoadStatus? status,
+    List<Course>? courses,
+    List<UniversityStudent>? students,
+    List<AttendanceEntry>? entries,
+    String? openSessionCourseId,
+    String? errorMessage,
+    String? actionMessage,
+  }) => UniversityState(
+    status: status ?? this.status,
+    courses: courses ?? this.courses,
+    students: students ?? this.students,
+    entries: entries ?? this.entries,
+    openSessionCourseId: openSessionCourseId ?? this.openSessionCourseId,
+    errorMessage: errorMessage ?? this.errorMessage,
+    actionMessage: actionMessage ?? this.actionMessage,
+  );
+
   int presentFor(String courseId) =>
       entries.where((entry) => entry.courseId == courseId).length;
 

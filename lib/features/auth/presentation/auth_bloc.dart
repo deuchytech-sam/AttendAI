@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
@@ -11,6 +12,7 @@ import '../domain/usecases/send_password_reset_email.dart';
 import '../domain/usecases/sign_in.dart';
 import '../domain/usecases/sign_out.dart';
 import '../domain/usecases/watch_university_account.dart';
+import '../../notifications/notification_service.dart';
 import 'auth_event.dart';
 import 'auth_state.dart';
 
@@ -23,6 +25,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     required this._signIn,
     required this._sendPasswordResetEmail,
     required WatchUniversityAccount watchAccount,
+    required this._notificationService,
   }) : super(const AuthState()) {
     on<AuthSessionChanged>(_onSessionChanged);
     on<AuthSignInSubmitted>(_onSignInSubmitted);
@@ -47,10 +50,23 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
   final SignOut _signOut;
   final ResendEmailVerification _resendVerification;
   final SendPasswordResetEmail _sendPasswordResetEmail;
+  final NotificationService _notificationService;
   late final StreamSubscription<UniversityAccount?> _subscription;
 
   void _onSessionChanged(AuthSessionChanged event, Emitter<AuthState> emit) {
     final account = event.account;
+    final isAuthenticated = account != null && account.status == AccountStatus.active;
+
+    // Initialize notification service when user authenticates
+    if (isAuthenticated) {
+      _initializeNotifications(account);
+    }
+
+    // Dispose notification service when user signs out
+    if (account == null) {
+      _notificationService.dispose();
+    }
+
     emit(
       AuthState(
         status: account == null
@@ -61,6 +77,31 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
         account: account,
       ),
     );
+  }
+
+  Future<void> _initializeNotifications(UniversityAccount account) async {
+    try {
+      // Get enrolled course IDs from Firestore member document
+      final memberDoc = await FirebaseFirestore.instance
+          .collection('universities')
+          .doc(account.universityId)
+          .collection('members')
+          .doc(account.uid)
+          .get();
+
+      final courseIds = (memberDoc.data()?['courseIds'] as List<dynamic>? ?? [])
+          .whereType<String>()
+          .toList();
+
+      await _notificationService.initialize(
+        userId: account.uid,
+        universityId: account.universityId,
+        enrolledCourseIds: courseIds,
+      );
+    } catch (e) {
+      // Log error but don't crash authentication
+      // debugPrint('Failed to initialize notifications: $e');
+    }
   }
 
   Future<void> _onSignInSubmitted(
@@ -107,6 +148,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     emit(const AuthState(status: AuthStatus.loading));
     try {
       await _signOut();
+      _notificationService.dispose();
       emit(const AuthState(status: AuthStatus.signedOut));
     } catch (error) {
       emit(
@@ -176,6 +218,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
   @override
   Future<void> close() async {
     await _subscription.cancel();
+    _notificationService.dispose();
     await super.close();
   }
 }

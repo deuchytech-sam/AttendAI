@@ -19,9 +19,10 @@ import '../features/auth/domain/usecases/sign_out.dart';
 import '../features/auth/domain/usecases/watch_university_account.dart';
 import '../features/auth/presentation/auth_bloc.dart';
 import '../features/biometrics/data/repositories/face_liveness_biometric_repository.dart';
-import '../features/biometrics/data/services/face_liveness_attendance_service.dart';
+import '../features/biometrics/domain/services/face_liveness_service.dart';
 import '../features/biometrics/domain/repositories/biometric_repository.dart';
 import '../features/biometrics/domain/usecases/enroll_student_biometric.dart';
+import '../features/notifications/notification_service.dart';
 import '../features/university/data/datasources/firestore_university_data_source.dart';
 import '../features/university/data/repositories/firebase_university_repository.dart';
 import '../features/university/domain/usecases/add_university_course.dart';
@@ -31,6 +32,8 @@ import '../features/university/domain/usecases/record_student_check_in.dart';
 import '../features/university/domain/usecases/toggle_attendance_session.dart';
 import '../features/university/presentation/university_bloc.dart';
 import '../features/university/presentation/university_event.dart';
+
+NotificationService createNotificationService() => NotificationService();
 
 AuthBloc createAuthBloc() {
   final repository = FirebaseAuthRepository(
@@ -44,6 +47,7 @@ AuthBloc createAuthBloc() {
     signOut: SignOut(repository),
     resendVerification: ResendEmailVerification(repository),
     sendPasswordResetEmail: SendPasswordResetEmail(repository),
+    notificationService: createNotificationService(),
   );
 }
 
@@ -61,10 +65,14 @@ AdminBloc createAdminBloc(UniversityAccount account) {
   )..add(const AdminDashboardRequested());
 }
 
+// Singleton FaceLivenessService (uses FaceIdentityService internally with SharedPreferences)
+FaceLivenessService createFaceLivenessService() {
+  return FaceLivenessService();
+}
+
 BiometricRepository createBiometricRepository() {
-  return FaceLivenessBiometricRepository(
-    attendanceService: FaceLivenessAttendanceService(),
-  );
+  final livenessService = createFaceLivenessService();
+  return FaceLivenessBiometricRepository(livenessService: livenessService);
 }
 
 EnrollStudentBiometric createEnrollStudentBiometric() {
@@ -72,18 +80,23 @@ EnrollStudentBiometric createEnrollStudentBiometric() {
 }
 
 UniversityBloc createUniversityBloc(UniversityAccount account) {
-  final repository = FirebaseUniversityRepository(
-    FirestoreUniversityDataSource(
-      FirebaseFirestore.instance,
-      account,
-      FaceLivenessAttendanceService(),
-    ),
+  final livenessService = createFaceLivenessService();
+  final biometricRepository = FaceLivenessBiometricRepository(
+    livenessService: livenessService,
   );
+
+  final dataSource = FirestoreUniversityDataSource(
+    FirebaseFirestore.instance,
+    account,
+    biometricRepository,
+  );
+  final repository = FirebaseUniversityRepository(dataSource);
   return UniversityBloc(
     getDashboard: GetUniversityDashboard(repository),
     addCourse: AddUniversityCourse(repository),
     enrollStudent: EnrollUniversityStudent(repository),
     toggleSession: ToggleAttendanceSession(repository),
     recordCheckIn: RecordStudentCheckIn(repository),
+    dataSource: dataSource,
   )..add(const UniversityDashboardRequested());
 }
