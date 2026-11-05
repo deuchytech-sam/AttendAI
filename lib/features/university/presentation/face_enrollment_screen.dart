@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_face_liveness/flutter_face_liveness.dart';
 
 import '../../biometrics/domain/services/face_liveness_service.dart';
+import '../data/datasources/firestore_university_data_source.dart';
 
 /// Screen where a student enrolls their face using FlutterFaceLiveness widget.
 ///
@@ -14,11 +15,13 @@ class FaceEnrollmentScreen extends StatefulWidget {
     required this.userId,
     required this.universityId,
     required this.livenessService,
+    required this.dataSource,
   });
 
   final String userId;
   final String universityId;
   final FaceLivenessService livenessService;
+  final FirestoreUniversityDataSource dataSource;
 
   @override
   State<FaceEnrollmentScreen> createState() => _FaceEnrollmentScreenState();
@@ -31,13 +34,22 @@ class _FaceEnrollmentScreenState extends State<FaceEnrollmentScreen> {
   @override
   void initState() {
     super.initState();
-    // Check if face already registered
+    // Check if face already registered (locally or in cloud)
     _checkExistingRegistration();
   }
 
   Future<void> _checkExistingRegistration() async {
-    final hasTemplate = await widget.livenessService.hasTemplate(faceId: widget.userId);
-    if (hasTemplate && mounted) {
+    // Check local first
+    final hasLocalTemplate = await widget.livenessService.hasTemplate(faceId: widget.userId);
+    if (hasLocalTemplate && mounted) {
+      setState(() {
+        _error = 'Face already enrolled for this user. Please verify instead.';
+      });
+      return;
+    }
+    // Check cloud
+    final hasCloudTemplate = await widget.dataSource.hasFaceEmbeddings(widget.userId);
+    if (hasCloudTemplate && mounted) {
       setState(() {
         _error = 'Face already enrolled for this user. Please verify instead.';
       });
@@ -50,7 +62,38 @@ class _FaceEnrollmentScreenState extends State<FaceEnrollmentScreen> {
 
     try {
       if (result.isSuccess && result.faceId != null) {
-        // Face successfully enrolled
+        // Face successfully enrolled locally, now save to cloud
+        // Export face embeddings from local storage
+        final embeddings = widget.livenessService.exportFace(widget.userId);
+        if (embeddings == null || embeddings.isEmpty) {
+          if (mounted) {
+            setState(() {
+              _error = 'No face embeddings generated. Please try again.';
+              _isProcessing = false;
+            });
+          }
+          return;
+        }
+
+        try {
+          // Save to Firestore - MUST succeed for cross-device verification to work
+          await widget.dataSource.saveFaceEmbeddings(
+            faceId: widget.userId,
+            embeddings: embeddings,
+            studentId: widget.userId,
+          );
+          debugPrint('[FaceEnrollment] Saved ${embeddings.length} embeddings to Firestore for faceId: ${widget.userId}');
+        } catch (e) {
+          debugPrint('[FaceEnrollment] Error saving to Firestore: $e');
+          if (mounted) {
+            setState(() {
+              _error = 'Face enrolled locally but failed to sync to cloud: $e. Please try again or contact support.';
+              _isProcessing = false;
+            });
+          }
+          return;
+        }
+
         if (mounted) {
           _showSuccessDialog(result.faceId!);
         }
@@ -87,11 +130,11 @@ class _FaceEnrollmentScreenState extends State<FaceEnrollmentScreen> {
           children: [
             Icon(Icons.check_circle, color: Colors.green),
             SizedBox(width: 8),
-            Text('Face Enrolled'),
+            Expanded(child: Text('Face Enrolled')),
           ],
         ),
         content: Text(
-          'Your face has been saved (ID: $faceId). You can now use it to check in.',
+          'Your face has been saved (ID: $faceId). You can now use it to check in on any device.',
         ),
         actions: [
           TextButton(

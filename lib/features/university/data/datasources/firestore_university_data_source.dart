@@ -203,6 +203,49 @@ class FirestoreUniversityDataSource {
     );
   }
 
+  /// Collection reference for face embeddings.
+  CollectionReference<Map<String, dynamic>> get _faceEmbeddingsCollection =>
+      _collection('faceEmbeddings');
+
+  /// Saves face embeddings to Firestore for the given face ID (student's Firebase UID).
+  /// The embeddings are stored as a list of lists of doubles.
+  Future<void> saveFaceEmbeddings({
+    required String faceId,
+    required List<List<double>> embeddings,
+    required String studentId,
+  }) async {
+    await _faceEmbeddingsCollection.doc(faceId).set({
+      'faceId': faceId,
+      'studentId': studentId,
+      'embeddings': embeddings,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
+  /// Loads face embeddings from Firestore for the given face ID.
+  /// Returns the list of embeddings, or null if not found.
+  Future<List<List<double>>?> loadFaceEmbeddings(String faceId) async {
+    final doc = await _faceEmbeddingsCollection.doc(faceId).get();
+    if (!doc.exists) return null;
+    final data = doc.data()!;
+    final embeddings = data['embeddings'] as List<dynamic>?;
+    if (embeddings == null) return null;
+    return embeddings
+        .map((e) => (e as List<dynamic>).map((v) => (v as num).toDouble()).toList())
+        .toList();
+  }
+
+  /// Checks if face embeddings exist in Firestore for the given face ID.
+  Future<bool> hasFaceEmbeddings(String faceId) async {
+    final doc = await _faceEmbeddingsCollection.doc(faceId).get();
+    return doc.exists;
+  }
+
+  /// Deletes face embeddings from Firestore for the given face ID.
+  Future<void> deleteFaceEmbeddings(String faceId) async {
+    await _faceEmbeddingsCollection.doc(faceId).delete();
+  }
+
   Course _courseFromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
     final data = doc.data() ?? const <String, dynamic>{};
     return Course(

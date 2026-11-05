@@ -276,6 +276,7 @@ class _UniversityHomePageState extends State<UniversityHomePage> {
     final userId = bloc.dataSource.userId;
     final universityId = widget.universityId;
     final livenessService = bloc.dataSource.livenessService;
+    final dataSource = bloc.dataSource;
 
     final universityBloc = context.read<UniversityBloc>();
 
@@ -287,6 +288,7 @@ class _UniversityHomePageState extends State<UniversityHomePage> {
             userId: userId,
             universityId: universityId,
             livenessService: livenessService,
+            dataSource: dataSource,
           ),
         ),
       ),
@@ -346,104 +348,6 @@ class _UniversityHomePageState extends State<UniversityHomePage> {
         courseId: values[2],
       ),
     );
-  }
-
-  Future<void> _showEnrollmentDialog() async {
-    // Get current state to access students list
-    final state = context.read<UniversityBloc>().state;
-    final students = state.students.where((s) => s.userId != null && s.userId!.isNotEmpty).toList();
-
-    if (students.isEmpty) {
-      _notice('No students with linked Firebase accounts found. Students must sign in first to link their account.');
-      return;
-    }
-
-    // Show student selection dialog
-    final selectedStudent = await showDialog<UniversityStudent>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Select student to enroll'),
-        content: SizedBox(
-          width: double.maxFinite,
-          child: ListView.builder(
-            shrinkWrap: true,
-            itemCount: students.length,
-            itemBuilder: (_, index) {
-              final student = students[index];
-              return ListTile(
-                title: Text(student.name),
-                subtitle: Text('Matric: ${student.matricNumber}'),
-                onTap: () => Navigator.pop(dialogContext, student),
-              );
-            },
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Cancel'),
-          ),
-        ],
-      ),
-    );
-
-    if (selectedStudent == null || !mounted) return;
-
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        icon: const Icon(
-          Icons.face_retouching_natural_rounded,
-          size: 38,
-          color: AppTheme.teal,
-        ),
-        title: Text('Enroll face for ${selectedStudent.name}'),
-        content: const Text(
-          'This will start the camera to capture the student\'s face '
-          'and create a biometric profile for attendance. '
-          'The student should be present and positioned in front of the camera.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Continue'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed != true || !mounted) return;
-
-    // Use the student's Firebase Auth UID (userId) for enrollment
-    // This matches what the student will use during check-in
-    final faceEnrollmentId = selectedStudent.userId!;
-
-    // Get the liveness service from the bloc's data source
-    final bloc = context.read<UniversityBloc>();
-    final livenessService = bloc.dataSource.livenessService;
-
-    // Launch the enrollment screen
-    final enrolled = await Navigator.of(context).push<bool>(
-      MaterialPageRoute(
-        builder: (_) => FaceEnrollmentScreen(
-          userId: faceEnrollmentId,
-          universityId: _universityId,
-          livenessService: livenessService,
-        ),
-      ),
-    );
-
-    if (!mounted) return;
-
-    if (enrolled == true) {
-      _notice('Face enrolled successfully for ${selectedStudent.name}.');
-    } else {
-      _notice('Face enrollment was cancelled or failed.');
-    }
   }
 }
 
@@ -1081,9 +985,10 @@ class _AttendancePage extends StatelessWidget {
 
     if (confirmed != true || !context.mounted) return;
 
-    // Get the liveness service from the bloc's data source
+    // Get the liveness service and data source from the bloc
     final bloc = context.read<UniversityBloc>();
     final livenessService = bloc.dataSource.livenessService;
+    final dataSource = bloc.dataSource;
 
     // Launch the enrollment screen
     final enrolled = await Navigator.of(context).push<bool>(
@@ -1092,6 +997,7 @@ class _AttendancePage extends StatelessWidget {
           userId: faceEnrollmentId,
           universityId: universityId,
           livenessService: livenessService,
+          dataSource: dataSource,
         ),
       ),
     );

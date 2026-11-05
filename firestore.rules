@@ -170,6 +170,37 @@ service cloud.firestore {
         allow read: if hasRole(universityId, 'lecturer');
         allow write: if false;
       }
+
+      match /faceEmbeddings/{userId} {
+        // Students can read and write ONLY their own face embeddings document
+        allow get: if signedIn() && request.auth.uid == userId;
+        allow list: if false;
+        allow create: if signedIn()
+          && request.auth.uid == userId
+          && request.resource.data.keys().hasOnly([
+            'faceId', 'studentId', 'embeddings', 'updatedAt'
+          ])
+          && request.resource.data.keys().hasAll([
+            'faceId', 'studentId', 'embeddings', 'updatedAt'
+          ])
+          && request.resource.data.faceId == userId
+          && request.resource.data.studentId == userId
+          && request.resource.data.embeddings is list
+          && request.resource.data.updatedAt == request.time;
+        allow update: if signedIn()
+          && request.auth.uid == userId
+          && request.resource.data.keys().hasOnly([
+            'faceId', 'studentId', 'embeddings', 'updatedAt'
+          ])
+          && request.resource.data.keys().hasAll([
+            'faceId', 'studentId', 'embeddings', 'updatedAt'
+          ])
+          && request.resource.data.faceId == userId
+          && request.resource.data.studentId == userId
+          && request.resource.data.embeddings is list
+          && request.resource.data.updatedAt == request.time;
+        allow delete: if signedIn() && request.auth.uid == userId;
+      }
     }
   }
 }

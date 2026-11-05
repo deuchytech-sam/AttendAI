@@ -288,6 +288,43 @@ class FaceIdentityService {
   int get totalEmbeddingCount =>
       _gallery.values.fold(0, (s, l) => s + l.length);
 
+  /// Export face embeddings for a specific face ID.
+  /// Returns the list of embeddings, or null if face ID not found.
+  List<List<double>>? exportFace(String faceId) {
+    return _gallery[faceId] != null ? List.from(_gallery[faceId]!) : null;
+  }
+
+  /// Export all face data as a map of faceId -> embeddings.
+  Map<String, List<List<double>>> exportAllFaces() {
+    return {
+      for (final entry in _gallery.entries)
+        entry.key: List.from(entry.value)
+    };
+  }
+
+  /// Import face embeddings for a specific face ID.
+  /// Replaces any existing embeddings for this face ID.
+  Future<void> importFace(String faceId, List<List<double>> embeddings) async {
+    if (embeddings.isEmpty) return;
+    _gallery[faceId] = List.from(embeddings);
+    await _flushToPrefs();
+  }
+
+  /// Import multiple faces from a map.
+  Future<void> importAllFaces(Map<String, List<List<double>>> data) async {
+    for (final entry in data.entries) {
+      if (entry.value.isNotEmpty) {
+        _gallery[entry.key] = List.from(entry.value);
+      }
+    }
+    await _flushToPrefs();
+  }
+
+  /// Get the number of embeddings stored for a specific face ID.
+  int getEmbeddingCount(String faceId) {
+    return _gallery[faceId]?.length ?? 0;
+  }
+
   /// Check if any face in the gallery has similarity ≥ [registrationDuplicateThreshold]
   /// to [embedding] WITHOUT modifying the gallery. Use to pre-validate before
   /// committing a registration.

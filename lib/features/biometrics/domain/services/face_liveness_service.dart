@@ -53,6 +53,33 @@ class FaceLivenessService {
     await _faceIdentityService.clearAllFaces();
   }
 
+  /// Exports face embeddings for a specific face ID.
+  /// Returns the list of embeddings, or null if face ID not found locally.
+  List<List<double>>? exportFace(String faceId) {
+    return _faceIdentityService.exportFace(faceId);
+  }
+
+  /// Exports all face data as a map of faceId -> embeddings.
+  Map<String, List<List<double>>> exportAllFaces() {
+    return _faceIdentityService.exportAllFaces();
+  }
+
+  /// Imports face embeddings for a specific face ID.
+  /// Replaces any existing embeddings for this face ID.
+  Future<void> importFace(String faceId, List<List<double>> embeddings) async {
+    await _faceIdentityService.importFace(faceId, embeddings);
+  }
+
+  /// Imports multiple faces from a map.
+  Future<void> importAllFaces(Map<String, List<List<double>>> data) async {
+    await _faceIdentityService.importAllFaces(data);
+  }
+
+  /// Gets the number of embeddings stored for a specific face ID.
+  int getEmbeddingCount(String faceId) {
+    return _faceIdentityService.getEmbeddingCount(faceId);
+  }
+
   /// Creates the liveness configuration for enrollment (registration).
   LivenessConfig createEnrollmentConfig({
     bool randomizeActions = true,
