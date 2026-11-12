@@ -7,8 +7,9 @@ import 'auth_event.dart';
 import 'auth_state.dart';
 
 class SignInPage extends StatefulWidget {
-  const SignInPage({super.key, this.errorMessage});
+  const SignInPage({super.key, this.errorMessage, this.isLoading = false});
   final String? errorMessage;
+  final bool isLoading;
 
   @override
   State<SignInPage> createState() => _SignInPageState();
@@ -145,10 +146,14 @@ class _SignInPageState extends State<SignInPage> {
                   const SizedBox(height: 20),
                   BlocBuilder<AuthBloc, AuthState>(
                     builder: (context, state) => FilledButton(
-                      onPressed: state.status == AuthStatus.loading
+                      onPressed:
+                          widget.isLoading ||
+                              state.status == AuthStatus.submitting
                           ? null
                           : _submit,
-                      child: state.status == AuthStatus.loading
+                      child:
+                          widget.isLoading ||
+                              state.status == AuthStatus.submitting
                           ? const SizedBox(
                               width: 20,
                               height: 20,

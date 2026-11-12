@@ -25,3 +25,20 @@ final class AdminAccountApprovalRequested extends AdminEvent {
   @override
   List<Object?> get props => [account, courseIds];
 }
+
+final class AdminCourseSavedRequested extends AdminEvent {
+  const AdminCourseSavedRequested({
+    required this.courseId,
+    required this.name,
+    required this.schedule,
+    required this.lecturerIds,
+  });
+
+  final String? courseId;
+  final String name;
+  final String schedule;
+  final List<String> lecturerIds;
+
+  @override
+  List<Object?> get props => [courseId, name, schedule, lecturerIds];
+}

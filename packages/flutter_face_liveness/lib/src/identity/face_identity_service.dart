@@ -62,10 +62,10 @@ class FaceMatchResult {
   /// Embedding quality score (0.0–1.0). Null when quality check is skipped.
   final double? qualityScore;
 
-  bool get isMatched    => outcome == FaceMatchOutcome.matched;
+  bool get isMatched => outcome == FaceMatchOutcome.matched;
   bool get isRegistered => outcome == FaceMatchOutcome.registered;
-  bool get isDuplicate  => outcome == FaceMatchOutcome.alreadyExists;
-  bool get isNotFound   => outcome == FaceMatchOutcome.notFound;
+  bool get isDuplicate => outcome == FaceMatchOutcome.alreadyExists;
+  bool get isNotFound => outcome == FaceMatchOutcome.notFound;
 
   // Legacy helpers for callers that used the old ({faceId, isNew}) record
   bool get isNew => outcome == FaceMatchOutcome.registered;
@@ -83,11 +83,11 @@ class FaceMatchResult {
 /// Enable via [LivenessConfig.enableFaceId].
 class FaceIdentityService {
   FaceIdentityService({
-    this.similarityThreshold        = 0.82,
+    this.similarityThreshold = 0.82,
     this.registrationDuplicateThreshold = 0.75,
-    this.minEmbeddingQuality        = 0.50,
-    this.mode                       = FaceIdMode.auto,
-    this.maxEmbeddingsPerFace       = 5,
+    this.minEmbeddingQuality = 0.50,
+    this.mode = FaceIdMode.auto,
+    this.maxEmbeddingsPerFace = 5,
   });
 
   /// Minimum cosine similarity to consider two embeddings the same face.
@@ -121,8 +121,8 @@ class FaceIdentityService {
   Uint8List? _encKey;
 
   // Storage keys
-  static const _kPrefsKey    = 'ffl_known_faces_v4'; // encrypted gallery
-  static const _kEncKeyPrefs = 'ffl_enc_key_v1';     // device encryption key
+  static const _kPrefsKey = 'ffl_known_faces_v4'; // encrypted gallery
+  static const _kEncKeyPrefs = 'ffl_enc_key_v1'; // device encryption key
 
   bool get isReady => _model.isLoaded;
 
@@ -133,6 +133,30 @@ class FaceIdentityService {
   }) async {
     await _model.load(onProgress: onModelDownloadProgress);
     await _loadStoredFaces();
+  }
+
+  /// Reloads the persisted gallery after another service instance updates it.
+  Future<void> refreshStoredFaces() async {
+    _gallery.clear();
+    await _loadStoredFaces();
+  }
+
+  String _pendingSyncKey(String faceId) =>
+      'face_embedding_sync_pending_$faceId';
+
+  Future<void> markSyncPending(String faceId) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_pendingSyncKey(faceId), true);
+  }
+
+  Future<bool> isSyncPending(String faceId) async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_pendingSyncKey(faceId)) ?? false;
+  }
+
+  Future<void> clearSyncPending(String faceId) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_pendingSyncKey(faceId));
   }
 
   void dispose() => _model.dispose();
@@ -159,16 +183,25 @@ class FaceIdentityService {
     bool coordinatesInSensorSpace = false,
   }) async {
     if (!isReady) return null;
-    final eyeAligned = leftEyeX != null && leftEyeY != null &&
-                       rightEyeX != null && rightEyeY != null;
+    final eyeAligned = leftEyeX != null &&
+        leftEyeY != null &&
+        rightEyeX != null &&
+        rightEyeY != null;
     debugPrint('[FaceId] computeEmbedding eyeAligned=$eyeAligned');
-    final input = await compute(_runPreprocess, _PreprocessInput(
-      imageBytes: imageBytes, imageWidth: imageWidth, imageHeight: imageHeight,
-      bbox: faceBoundingBox, sensorOrientation: sensorOrientation,
-      leftEyeX: leftEyeX, leftEyeY: leftEyeY,
-      rightEyeX: rightEyeX, rightEyeY: rightEyeY,
-      coordinatesInSensorSpace: coordinatesInSensorSpace,
-    ));
+    final input = await compute(
+        _runPreprocess,
+        _PreprocessInput(
+          imageBytes: imageBytes,
+          imageWidth: imageWidth,
+          imageHeight: imageHeight,
+          bbox: faceBoundingBox,
+          sensorOrientation: sensorOrientation,
+          leftEyeX: leftEyeX,
+          leftEyeY: leftEyeY,
+          rightEyeX: rightEyeX,
+          rightEyeY: rightEyeY,
+          coordinatesInSensorSpace: coordinatesInSensorSpace,
+        ));
     if (input == null) return null;
     return _model.infer(input);
   }
@@ -193,10 +226,14 @@ class FaceIdentityService {
   }) async {
     if (!isReady) return null;
     final input = FacePreprocessor.prepareFromRgb(
-      width: imageWidth, height: imageHeight,
-      bbox: faceBoundingBox, samplePixel: samplePixel,
-      leftEyeX: leftEyeX, leftEyeY: leftEyeY,
-      rightEyeX: rightEyeX, rightEyeY: rightEyeY,
+      width: imageWidth,
+      height: imageHeight,
+      bbox: faceBoundingBox,
+      samplePixel: samplePixel,
+      leftEyeX: leftEyeX,
+      leftEyeY: leftEyeY,
+      rightEyeX: rightEyeX,
+      rightEyeY: rightEyeY,
     );
     if (input == null) return null;
     return _model.infer(input);
@@ -233,17 +270,22 @@ class FaceIdentityService {
       final len = toUse.first.length;
       final avg = List<double>.filled(len, 0.0);
       for (final e in toUse) {
-        for (int i = 0; i < len; i++) { avg[i] += e[i]; }
+        for (int i = 0; i < len; i++) {
+          avg[i] += e[i];
+        }
       }
       double norm = 0.0;
-      for (final v in avg) { norm += v * v; }
+      for (final v in avg) {
+        norm += v * v;
+      }
       norm = math.sqrt(norm);
       averaged = norm < 1e-10 ? avg : avg.map((v) => v / norm).toList();
       debugPrint('[FaceId] Averaged ${toUse.length} embeddings '
           '(quality=${embeddingQuality(averaged).toStringAsFixed(2)})');
     }
 
-    return _matchOrRegister(averaged, modeOverride: modeOverride, faceId: faceId);
+    return _matchOrRegister(averaged,
+        modeOverride: modeOverride, faceId: faceId);
   }
 
   /// Identify from a single frame (convenience wrapper — prefer multi-frame).
@@ -253,15 +295,22 @@ class FaceIdentityService {
     required int imageHeight,
     required Rect faceBoundingBox,
     required int sensorOrientation,
-    double? leftEyeX, double? leftEyeY,
-    double? rightEyeX, double? rightEyeY,
+    double? leftEyeX,
+    double? leftEyeY,
+    double? rightEyeX,
+    double? rightEyeY,
     FaceIdMode? modeOverride,
   }) async {
     final emb = await computeEmbedding(
-      imageBytes: imageBytes, imageWidth: imageWidth, imageHeight: imageHeight,
-      faceBoundingBox: faceBoundingBox, sensorOrientation: sensorOrientation,
-      leftEyeX: leftEyeX, leftEyeY: leftEyeY,
-      rightEyeX: rightEyeX, rightEyeY: rightEyeY,
+      imageBytes: imageBytes,
+      imageWidth: imageWidth,
+      imageHeight: imageHeight,
+      faceBoundingBox: faceBoundingBox,
+      sensorOrientation: sensorOrientation,
+      leftEyeX: leftEyeX,
+      leftEyeY: leftEyeY,
+      rightEyeX: rightEyeX,
+      rightEyeY: rightEyeY,
     );
     if (emb == null) return null;
     return _matchOrRegister(emb, modeOverride: modeOverride);
@@ -297,8 +346,7 @@ class FaceIdentityService {
   /// Export all face data as a map of faceId -> embeddings.
   Map<String, List<List<double>>> exportAllFaces() {
     return {
-      for (final entry in _gallery.entries)
-        entry.key: List.from(entry.value)
+      for (final entry in _gallery.entries) entry.key: List.from(entry.value)
     };
   }
 
@@ -332,11 +380,14 @@ class FaceIdentityService {
   /// Returns the matching face ID and similarity, or null if no duplicate found.
   ({String faceId, double similarity})? checkDuplicate(List<double> embedding) {
     String? bestId;
-    double  bestSim = -1.0;
+    double bestSim = -1.0;
     for (final entry in _gallery.entries) {
       for (final stored in entry.value) {
         final sim = cosineSimilarity(embedding, stored);
-        if (sim > bestSim) { bestSim = sim; bestId = entry.key; }
+        if (sim > bestSim) {
+          bestSim = sim;
+          bestId = entry.key;
+        }
       }
     }
     if (bestId != null && bestSim >= registrationDuplicateThreshold) {
@@ -356,14 +407,17 @@ class FaceIdentityService {
     final quality = embeddingQuality(embedding);
 
     String? bestId;
-    double  bestSim = -1.0;
+    double bestSim = -1.0;
 
     // Gallery search: max similarity across all stored embeddings per face.
     // O(N × K) where N = faces, K = embeddings per face (≤ maxEmbeddingsPerFace).
     for (final entry in _gallery.entries) {
       for (final stored in entry.value) {
         final sim = cosineSimilarity(embedding, stored);
-        if (sim > bestSim) { bestSim = sim; bestId = entry.key; }
+        if (sim > bestSim) {
+          bestSim = sim;
+          bestId = entry.key;
+        }
       }
     }
 
@@ -373,37 +427,48 @@ class FaceIdentityService {
         'threshold=$similarityThreshold  dupThreshold=$registrationDuplicateThreshold');
 
     switch (effectiveMode) {
-
       // ── Verification only ─────────────────────────────────────────────────
       case FaceIdMode.verificationOnly:
         if (bestId != null && bestSim >= similarityThreshold) {
-          debugPrint('[FaceId] VERIFIED → $bestId  sim=${bestSim.toStringAsFixed(3)}');
+          debugPrint(
+              '[FaceId] VERIFIED → $bestId  sim=${bestSim.toStringAsFixed(3)}');
           return FaceMatchResult(
             outcome: FaceMatchOutcome.matched,
-            faceId: bestId, similarity: bestSim, qualityScore: quality,
+            faceId: bestId,
+            similarity: bestSim,
+            qualityScore: quality,
           );
         }
         debugPrint('[FaceId] NOT FOUND  bestSim=${bestSim.toStringAsFixed(3)}');
         return FaceMatchResult(
           outcome: FaceMatchOutcome.notFound,
-          faceId: null, similarity: bestSim, qualityScore: quality,
+          faceId: null,
+          similarity: bestSim,
+          qualityScore: quality,
         );
 
       // ── Registration only (duplicate prevention) ──────────────────────────
       case FaceIdMode.registrationOnly:
         // Debug log: show gallery state and match details
         if (kDebugMode) {
-          debugPrint('[FaceId][DEBUG] Gallery face IDs: ${_gallery.keys.toList()}');
-          debugPrint('[FaceId][DEBUG] Provided faceId for registration: $faceId');
-          debugPrint('[FaceId][DEBUG] Best match: $bestId, similarity: ${bestSim.toStringAsFixed(3)}, dupThreshold: $registrationDuplicateThreshold');
+          debugPrint(
+              '[FaceId][DEBUG] Gallery face IDs: ${_gallery.keys.toList()}');
+          debugPrint(
+              '[FaceId][DEBUG] Provided faceId for registration: $faceId');
+          debugPrint(
+              '[FaceId][DEBUG] Best match: $bestId, similarity: ${bestSim.toStringAsFixed(3)}, dupThreshold: $registrationDuplicateThreshold');
         }
 
-        if (bestId != null && bestSim >= registrationDuplicateThreshold) {
+        if (bestId != null &&
+            bestId != faceId &&
+            bestSim >= registrationDuplicateThreshold) {
           debugPrint('[FaceId] DUPLICATE blocked → $bestId  '
               'sim=${bestSim.toStringAsFixed(3)} ≥ $registrationDuplicateThreshold');
           return FaceMatchResult(
             outcome: FaceMatchOutcome.alreadyExists,
-            faceId: bestId, similarity: bestSim, qualityScore: quality,
+            faceId: bestId,
+            similarity: bestSim,
+            qualityScore: quality,
           );
         }
         // New person — register with provided faceId or generate new one
@@ -415,7 +480,9 @@ class FaceIdentityService {
             'gallery=${_gallery.length}');
         return FaceMatchResult(
           outcome: FaceMatchOutcome.registered,
-          faceId: registrationFaceId, similarity: bestSim, qualityScore: quality,
+          faceId: registrationFaceId,
+          similarity: bestSim,
+          qualityScore: quality,
         );
 
       // ── Auto (match or register) ──────────────────────────────────────────
@@ -427,11 +494,14 @@ class FaceIdentityService {
             _gallery[bestId]!.removeAt(0);
           }
           await _flushToPrefs();
-          debugPrint('[FaceId] MATCHED → $bestId  sim=${bestSim.toStringAsFixed(3)}  '
+          debugPrint(
+              '[FaceId] MATCHED → $bestId  sim=${bestSim.toStringAsFixed(3)}  '
               'gallery_count=${_gallery[bestId]!.length}');
           return FaceMatchResult(
             outcome: FaceMatchOutcome.matched,
-            faceId: bestId, similarity: bestSim, qualityScore: quality,
+            faceId: bestId,
+            similarity: bestSim,
+            qualityScore: quality,
           );
         }
         // Unknown face — register new ID
@@ -443,7 +513,9 @@ class FaceIdentityService {
             'gallery=${_gallery.length}');
         return FaceMatchResult(
           outcome: FaceMatchOutcome.registered,
-          faceId: faceId, similarity: bestSim, qualityScore: quality,
+          faceId: faceId,
+          similarity: bestSim,
+          qualityScore: quality,
         );
     }
   }
@@ -460,14 +532,18 @@ class FaceIdentityService {
 
     // Check 1: L2 norm should be ≈ 1.0 (model normalises its output)
     double norm = 0.0;
-    for (final v in embedding) { norm += v * v; }
+    for (final v in embedding) {
+      norm += v * v;
+    }
     norm = math.sqrt(norm);
     if (norm < 0.80 || norm > 1.20) return 0.0;
 
     // Check 2: Variance should be non-trivial (not all-zero / all-one)
     final mean = embedding.reduce((a, b) => a + b) / embedding.length;
     double variance = 0.0;
-    for (final v in embedding) { variance += (v - mean) * (v - mean); }
+    for (final v in embedding) {
+      variance += (v - mean) * (v - mean);
+    }
     variance /= embedding.length;
     if (variance < 1e-4) return 0.0;
 
@@ -488,7 +564,7 @@ class FaceIdentityService {
     if (a.length != b.length) return 0.0;
     double dot = 0.0, magA = 0.0, magB = 0.0;
     for (int i = 0; i < a.length; i++) {
-      dot  += a[i] * b[i];
+      dot += a[i] * b[i];
       magA += a[i] * a[i];
       magB += b[i] * b[i];
     }
@@ -502,7 +578,7 @@ class FaceIdentityService {
     try {
       await _ensureEncKey();
       final prefs = await SharedPreferences.getInstance();
-      final json  = prefs.getString(_kPrefsKey);
+      final json = prefs.getString(_kPrefsKey);
       if (json == null) return;
       final Map<String, dynamic> decoded = jsonDecode(json);
       for (final e in decoded.entries) {
@@ -543,7 +619,7 @@ class FaceIdentityService {
 
   Future<void> _ensureEncKey() async {
     if (_encKey != null) return;
-    final prefs  = await SharedPreferences.getInstance();
+    final prefs = await SharedPreferences.getInstance();
     final stored = prefs.getString(_kEncKeyPrefs);
     if (stored != null) {
       _encKey = base64Decode(stored);
@@ -563,7 +639,7 @@ class FaceIdentityService {
         Float32List.fromList(embedding.map((v) => v.toDouble()).toList())
             .buffer
             .asUint8List();
-    final key    = _encKey!;
+    final key = _encKey!;
     final result = Uint8List(floatBytes.length);
     for (int i = 0; i < floatBytes.length; i++) {
       result[i] = floatBytes[i] ^ key[i % key.length];
@@ -572,21 +648,19 @@ class FaceIdentityService {
   }
 
   List<double> _decryptEmbedding(String encoded) {
-    final bytes  = base64Decode(encoded);
-    final key    = _encKey!;
+    final bytes = base64Decode(encoded);
+    final key = _encKey!;
     final result = Uint8List(bytes.length);
     for (int i = 0; i < bytes.length; i++) {
       result[i] = bytes[i] ^ key[i % key.length];
     }
-    return Float32List.view(result.buffer)
-        .map((v) => v.toDouble())
-        .toList();
+    return Float32List.view(result.buffer).map((v) => v.toDouble()).toList();
   }
 
   // ── Utilities ─────────────────────────────────────────────────────────────
 
   static String _newFaceId() {
-    final rand  = math.Random.secure();
+    final rand = math.Random.secure();
     final bytes = List.generate(12, (_) => rand.nextInt(256));
     return 'FID-${bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join().toUpperCase()}';
   }
@@ -596,9 +670,15 @@ class FaceIdentityService {
 
 class _PreprocessInput {
   const _PreprocessInput({
-    required this.imageBytes, required this.imageWidth, required this.imageHeight,
-    required this.bbox, required this.sensorOrientation,
-    this.leftEyeX, this.leftEyeY, this.rightEyeX, this.rightEyeY,
+    required this.imageBytes,
+    required this.imageWidth,
+    required this.imageHeight,
+    required this.bbox,
+    required this.sensorOrientation,
+    this.leftEyeX,
+    this.leftEyeY,
+    this.rightEyeX,
+    this.rightEyeY,
     this.coordinatesInSensorSpace = false,
   });
   final Uint8List imageBytes;
@@ -613,12 +693,15 @@ class _PreprocessInput {
   final bool coordinatesInSensorSpace;
 }
 
-Float32List? _runPreprocess(_PreprocessInput inp) =>
-    FacePreprocessor.prepare(
-      imageBytes: inp.imageBytes, imageWidth: inp.imageWidth,
-      imageHeight: inp.imageHeight, bbox: inp.bbox,
+Float32List? _runPreprocess(_PreprocessInput inp) => FacePreprocessor.prepare(
+      imageBytes: inp.imageBytes,
+      imageWidth: inp.imageWidth,
+      imageHeight: inp.imageHeight,
+      bbox: inp.bbox,
       sensorOrientation: inp.sensorOrientation,
-      leftEyeX: inp.leftEyeX, leftEyeY: inp.leftEyeY,
-      rightEyeX: inp.rightEyeX, rightEyeY: inp.rightEyeY,
+      leftEyeX: inp.leftEyeX,
+      leftEyeY: inp.leftEyeY,
+      rightEyeX: inp.rightEyeX,
+      rightEyeY: inp.rightEyeY,
       coordinatesInSensorSpace: inp.coordinatesInSensorSpace,
     );

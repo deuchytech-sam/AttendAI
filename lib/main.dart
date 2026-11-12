@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -16,7 +17,16 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
-  await FirebaseAppCheck.instance.activate();
+  // Debug builds need a registered App Check debug token (printed by the
+  // native SDK); release builds keep production attestation providers.
+  await FirebaseAppCheck.instance.activate(
+    providerAndroid: kDebugMode
+        ? const AndroidDebugProvider()
+        : const AndroidPlayIntegrityProvider(),
+    providerApple: kDebugMode
+        ? const AppleDebugProvider()
+        : const AppleDeviceCheckProvider(),
+  );
 
   // Initialize FCM background handler
   FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);

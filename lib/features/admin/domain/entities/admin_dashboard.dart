@@ -1,5 +1,6 @@
 import 'package:equatable/equatable.dart';
 
+import '../../../auth/domain/entities/university_account.dart';
 import '../../../university/domain/entities/course.dart';
 import '../../../university/domain/entities/university_role.dart';
 
@@ -32,11 +33,16 @@ class PendingAccount extends Equatable {
 }
 
 class AdminDashboard extends Equatable {
-  const AdminDashboard({required this.pendingAccounts, required this.courses});
+  const AdminDashboard({
+    required this.pendingAccounts,
+    required this.courses,
+    this.lecturers = const [],
+  });
 
   final List<PendingAccount> pendingAccounts;
   final List<Course> courses;
+  final List<UniversityAccount> lecturers;
 
   @override
-  List<Object?> get props => [pendingAccounts, courses];
+  List<Object?> get props => [pendingAccounts, courses, lecturers];
 }

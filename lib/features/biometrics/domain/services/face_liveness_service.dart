@@ -9,12 +9,12 @@ class FaceLivenessService {
     double minEmbeddingQuality = 0.50,
     int maxEmbeddingsPerFace = 5,
   }) : _faceIdentityService = FaceIdentityService(
-          similarityThreshold: similarityThreshold,
-          registrationDuplicateThreshold: registrationDuplicateThreshold,
-          minEmbeddingQuality: minEmbeddingQuality,
-          mode: faceIdMode,
-          maxEmbeddingsPerFace: maxEmbeddingsPerFace,
-        );
+         similarityThreshold: similarityThreshold,
+         registrationDuplicateThreshold: registrationDuplicateThreshold,
+         minEmbeddingQuality: minEmbeddingQuality,
+         mode: faceIdMode,
+         maxEmbeddingsPerFace: maxEmbeddingsPerFace,
+       );
 
   final FaceIdentityService _faceIdentityService;
 
@@ -22,7 +22,9 @@ class FaceLivenessService {
   Future<void> initialize({
     void Function(double progress)? onModelDownloadProgress,
   }) async {
-    await _faceIdentityService.initialize(onModelDownloadProgress: onModelDownloadProgress);
+    await _faceIdentityService.initialize(
+      onModelDownloadProgress: onModelDownloadProgress,
+    );
   }
 
   /// Disposes resources.
@@ -68,6 +70,23 @@ class FaceLivenessService {
   /// Replaces any existing embeddings for this face ID.
   Future<void> importFace(String faceId, List<List<double>> embeddings) async {
     await _faceIdentityService.importFace(faceId, embeddings);
+  }
+
+  /// Refreshes templates written by the liveness widget's internal service.
+  Future<void> refreshStoredFaces() async {
+    await _faceIdentityService.refreshStoredFaces();
+  }
+
+  Future<void> markSyncPending(String faceId) async {
+    await _faceIdentityService.markSyncPending(faceId);
+  }
+
+  Future<bool> isSyncPending(String faceId) async {
+    return _faceIdentityService.isSyncPending(faceId);
+  }
+
+  Future<void> clearSyncPending(String faceId) async {
+    await _faceIdentityService.clearSyncPending(faceId);
   }
 
   /// Imports multiple faces from a map.

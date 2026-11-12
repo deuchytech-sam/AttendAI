@@ -6,6 +6,7 @@ const { defineSecret, defineString } = require("firebase-functions/params");
 const { HttpsError, onCall } = require("firebase-functions/v2/https");
 
 initializeApp();
+Object.assign(exports, require("./checkin"));
 
 // FaceTec configuration
 const faceTecApiKey = defineSecret("FACETEC_API_KEY");
@@ -361,6 +362,7 @@ exports.completeFaceTecAttendanceVerification = onCall(
       transaction.set(recordRef, {
         studentId: identity.studentId,
         studentUid: identity.uid,
+        courseId: identity.courseId,
         sessionId: sessionRef.id,
         checkedAt: FieldValue.serverTimestamp(),
         verificationProvider: "facetec",

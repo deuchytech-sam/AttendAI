@@ -31,6 +31,8 @@ class AuthGatePage extends StatelessWidget {
         case AuthStatus.checking:
         case AuthStatus.loading:
           return const _AuthLoadingPage();
+        case AuthStatus.submitting:
+          return const SignInPage(isLoading: true);
         case AuthStatus.authenticated:
           final account = state.account!;
           if (account.role == UniversityRole.admin) {

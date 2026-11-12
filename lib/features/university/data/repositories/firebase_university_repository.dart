@@ -10,29 +10,45 @@ class FirebaseUniversityRepository implements UniversityRepository {
   Future<UniversityDashboard> getDashboard() => _dataSource.getDashboard();
 
   @override
-  Future<UniversityDashboard> addCourse({
-    required String name,
-    required String lecturer,
-    required String schedule,
-  }) =>
-      _dataSource.addCourse(name: name, lecturer: lecturer, schedule: schedule);
-
-  @override
-  Future<UniversityDashboard> addStudent({
-    required String name,
-    required String matricNumber,
-    required String courseId,
-  }) => _dataSource.addStudent(
-    name: name,
-    matricNumber: matricNumber,
-    courseId: courseId,
-  );
-
-  @override
   Future<UniversityDashboard> toggleSession(String courseId) =>
       _dataSource.toggleSession(courseId);
 
   @override
-  Future<AttendanceActionResult> checkIn({required String studentId}) =>
-      _dataSource.checkIn(studentId: studentId);
+  Future<AttendanceActionResult> checkIn({
+    required String studentId,
+    required String courseId,
+    required List<List<double>> faceEmbeddings,
+    required double faceMatchScore,
+  }) => _dataSource.checkIn(
+    studentId: studentId,
+    courseId: courseId,
+    faceEmbeddings: faceEmbeddings,
+    faceMatchScore: faceMatchScore,
+  );
+
+  @override
+  Stream<SessionAttendance> watchSessionAttendance(String sessionId) =>
+      _dataSource.watchSessionAttendance(sessionId);
+
+  @override
+  Future<SemesterAttendanceSummary> getSemesterAttendanceSummary({
+    required String courseId,
+    required DateTime semesterStart,
+    required DateTime semesterEnd,
+  }) => _dataSource.getSemesterAttendanceSummary(
+    courseId: courseId,
+    semesterStart: semesterStart,
+    semesterEnd: semesterEnd,
+  );
+
+  @override
+  Future<StudentAttendanceHistory> getStudentAttendanceHistory({
+    String? courseId,
+    required DateTime semesterStart,
+    required DateTime semesterEnd,
+  }) => _dataSource.getStudentAttendanceHistory(
+    courseId: courseId,
+    semesterStart: semesterStart,
+    semesterEnd: semesterEnd,
+  );
 }

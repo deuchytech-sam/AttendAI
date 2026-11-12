@@ -10,13 +10,21 @@ class UniversityDashboard extends Equatable {
     required this.students,
     required this.entries,
     required this.openSessionCourseId,
+    required this.openSessionId,
   });
 
   final List<Course> courses;
   final List<UniversityStudent> students;
   final List<AttendanceEntry> entries;
   final String? openSessionCourseId;
+  final String? openSessionId;
 
   @override
-  List<Object?> get props => [courses, students, entries, openSessionCourseId];
+  List<Object?> get props => [
+    courses,
+    students,
+    entries,
+    openSessionCourseId,
+    openSessionId,
+  ];
 }

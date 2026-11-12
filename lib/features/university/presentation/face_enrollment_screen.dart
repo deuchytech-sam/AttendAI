@@ -29,30 +29,44 @@ class FaceEnrollmentScreen extends StatefulWidget {
 
 class _FaceEnrollmentScreenState extends State<FaceEnrollmentScreen> {
   bool _isProcessing = false;
+  bool _isPreparing = true;
   String? _error;
 
   @override
   void initState() {
     super.initState();
-    // Check if face already registered (locally or in cloud)
-    _checkExistingRegistration();
+    _prepareExistingRegistration();
   }
 
-  Future<void> _checkExistingRegistration() async {
-    // Check local first
-    final hasLocalTemplate = await widget.livenessService.hasTemplate(faceId: widget.userId);
-    if (hasLocalTemplate && mounted) {
-      setState(() {
-        _error = 'Face already enrolled for this user. Please verify instead.';
-      });
-      return;
-    }
-    // Check cloud
-    final hasCloudTemplate = await widget.dataSource.hasFaceEmbeddings(widget.userId);
-    if (hasCloudTemplate && mounted) {
-      setState(() {
-        _error = 'Face already enrolled for this user. Please verify instead.';
-      });
+  Future<void> _prepareExistingRegistration() async {
+    try {
+      if (await widget.dataSource.isFaceEnrollmentResetRequired(
+        widget.userId,
+      )) {
+        await widget.livenessService.deleteTemplate(faceId: widget.userId);
+        await widget.livenessService.clearSyncPending(widget.userId);
+      }
+      // Seed local storage before the liveness widget initializes its own
+      // FaceIdentityService, so re-enrollment can replace this user's template.
+      final existing = await widget.dataSource.loadFaceEmbeddings(
+        widget.userId,
+      );
+      if (existing != null && existing.isNotEmpty) {
+        await widget.livenessService.importFace(widget.userId, existing);
+      } else {
+        await widget.livenessService.refreshStoredFaces();
+      }
+    } catch (e, stackTrace) {
+      debugPrint(
+        '[FaceEnrollment] Failed to prepare existing face data: $e\n$stackTrace',
+      );
+      if (mounted) {
+        setState(() {
+          _error = 'Could not load existing face data: $e';
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _isPreparing = false);
     }
   }
 
@@ -62,48 +76,95 @@ class _FaceEnrollmentScreenState extends State<FaceEnrollmentScreen> {
 
     try {
       if (result.isSuccess && result.faceId != null) {
-        // Face successfully enrolled locally, now save to cloud
-        // Export face embeddings from local storage
-        final embeddings = widget.livenessService.exportFace(widget.userId);
+        debugPrint(
+          '[FaceEnrollment] Liveness success; faceId=${result.faceId}, '
+          'captureBytes=${result.bestFrontalImageBytes?.length ?? 0}',
+        );
+        // FlutterFaceLiveness writes to its own FaceIdentityService instance.
+        // Reload its persisted gallery before exporting from the app service.
+        await widget.livenessService.refreshStoredFaces();
+        final allFaces = widget.livenessService.exportAllFaces();
+        final enrolledFaceId = result.faceId!;
+        final embeddings = allFaces[enrolledFaceId];
+        final embeddingLength = embeddings == null || embeddings.isEmpty
+            ? 0
+            : embeddings.first.length;
+        debugPrint(
+          '[FaceEnrollment] Gallery IDs=${allFaces.keys.toList()}, '
+          'embeddingCount=${embeddings?.length ?? 0}, length=$embeddingLength, dtype=double',
+        );
+
         if (embeddings == null || embeddings.isEmpty) {
           if (mounted) {
             setState(() {
-              _error = 'No face embeddings generated. Please try again.';
+              _error = 'Enrollment completed, but its local embedding could not be loaded. Your existing data was kept; please retry enrollment.';
               _isProcessing = false;
             });
           }
           return;
         }
 
+        var syncPending = false;
         try {
-          // Save to Firestore - MUST succeed for cross-device verification to work
+          // Save to Firestore under the student's userId for cross-device sync
           await widget.dataSource.saveFaceEmbeddings(
             faceId: widget.userId,
             embeddings: embeddings,
             studentId: widget.userId,
           );
-          debugPrint('[FaceEnrollment] Saved ${embeddings.length} embeddings to Firestore for faceId: ${widget.userId}');
-        } catch (e) {
-          debugPrint('[FaceEnrollment] Error saving to Firestore: $e');
-          if (mounted) {
-            setState(() {
-              _error = 'Face enrolled locally but failed to sync to cloud: $e. Please try again or contact support.';
-              _isProcessing = false;
-            });
+          final savedEmbeddings = await widget.dataSource.loadFaceEmbeddings(
+            widget.userId,
+          );
+          if (savedEmbeddings == null ||
+              savedEmbeddings.isEmpty ||
+              savedEmbeddings.length != embeddings.length ||
+              savedEmbeddings.any(
+                (vector) => vector.length != embeddingLength,
+              )) {
+            throw StateError('Saved face embedding could not be read back.');
           }
-          return;
+          debugPrint(
+            '[FaceEnrollment] Verified Firestore row=${widget.userId}, '
+            'userId=${widget.userId}, embeddings=${savedEmbeddings.length}, '
+            'length=${savedEmbeddings.first.length}, dtype=double',
+          );
+          await widget.livenessService.clearSyncPending(widget.userId);
+
+          // Also import into FaceIdentityService under userId for local verification
+          // This ensures verification can find the face using widget.userId
+          if (enrolledFaceId != widget.userId) {
+            await widget.livenessService.importFace(widget.userId, embeddings);
+            debugPrint(
+              '[FaceEnrollment] Imported embeddings under userId: ${widget.userId}',
+            );
+          }
+        } catch (e, stackTrace) {
+          debugPrint(
+            '[FaceEnrollment] Error saving to Firestore: $e\n$stackTrace',
+          );
+          try {
+            await widget.livenessService.markSyncPending(widget.userId);
+          } catch (pendingError, pendingStackTrace) {
+            debugPrint(
+              '[FaceEnrollment] Could not persist pending-sync marker: '
+              '$pendingError\n$pendingStackTrace',
+            );
+          }
+          syncPending = true;
         }
 
         if (mounted) {
-          _showSuccessDialog(result.faceId!);
+          _showSuccessDialog(enrolledFaceId, syncPending: syncPending);
         }
       } else {
         setState(() {
-          _error = result.failureReason ?? 'Enrollment failed. Please try again.';
+          _error =
+              result.failureReason ?? 'Enrollment failed. Please try again.';
           _isProcessing = false;
         });
       }
-    } catch (e) {
+    } catch (e, stackTrace) {
+      debugPrint('[FaceEnrollment] Enrollment stage failed: $e\n$stackTrace');
       if (mounted) {
         setState(() {
           _error = 'Enrollment error: $e';
@@ -121,20 +182,26 @@ class _FaceEnrollmentScreenState extends State<FaceEnrollmentScreen> {
     });
   }
 
-  void _showSuccessDialog(String faceId) {
+  void _showSuccessDialog(String faceId, {required bool syncPending}) {
     showDialog(
       context: context,
       barrierDismissible: false,
       builder: (dialogContext) => AlertDialog(
-        title: const Row(
+        title: Row(
           children: [
-            Icon(Icons.check_circle, color: Colors.green),
-            SizedBox(width: 8),
-            Expanded(child: Text('Face Enrolled')),
+            const Icon(Icons.check_circle, color: Colors.green),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                syncPending ? 'Face Enrolled Locally' : 'Face Enrolled',
+              ),
+            ),
           ],
         ),
         content: Text(
-          'Your face has been saved (ID: $faceId). You can now use it to check in on any device.',
+          syncPending
+              ? 'Your face is saved on this device (ID: $faceId). Cloud sync is pending; check-in will work on this device and sync will retry next time you open verification.'
+              : 'Your face has been saved (ID: $faceId). You can now use it to check in on any device.',
         ),
         actions: [
           TextButton(
@@ -162,12 +229,15 @@ class _FaceEnrollmentScreenState extends State<FaceEnrollmentScreen> {
       ),
       body: Stack(
         children: [
-          FlutterFaceLiveness(
-            actions: defaultLivenessActions,
-            config: config,
-            onSuccess: _onEnrollmentSuccess,
-            onFailed: _onEnrollmentFailed,
-          ),
+          if (_isPreparing)
+            const Center(child: CircularProgressIndicator())
+          else
+            FlutterFaceLiveness(
+              actions: defaultLivenessActions,
+              config: config,
+              onSuccess: _onEnrollmentSuccess,
+              onFailed: _onEnrollmentFailed,
+            ),
           if (_error != null)
             Positioned(
               top: 100,
@@ -202,15 +272,20 @@ class _FaceEnrollmentScreenState extends State<FaceEnrollmentScreen> {
                             Expanded(
                               child: OutlinedButton(
                                 onPressed: () async {
-                                  final messenger = ScaffoldMessenger.of(context);
-                                  await widget.livenessService.clearAllTemplates();
+                                  final messenger = ScaffoldMessenger.of(
+                                    context,
+                                  );
+                                  await widget.livenessService
+                                      .clearAllTemplates();
                                   if (mounted) {
                                     setState(() {
                                       _error = null;
                                     });
                                     messenger.showSnackBar(
                                       const SnackBar(
-                                        content: Text('All face templates cleared (debug)'),
+                                        content: Text(
+                                          'All face templates cleared (debug)',
+                                        ),
                                         backgroundColor: Colors.orange,
                                       ),
                                     );

@@ -10,6 +10,19 @@ class FirebaseAdminRepository implements AdminRepository {
   Future<AdminDashboard> getDashboard() => _dataSource.getDashboard();
 
   @override
+  Future<AdminDashboard> saveCourse({
+    required String? courseId,
+    required String name,
+    required String schedule,
+    required List<String> lecturerIds,
+  }) => _dataSource.saveCourse(
+    courseId: courseId,
+    name: name,
+    schedule: schedule,
+    lecturerIds: lecturerIds,
+  );
+
+  @override
   Future<AdminDashboard> approveAccount({
     required PendingAccount account,
     required List<String> courseIds,

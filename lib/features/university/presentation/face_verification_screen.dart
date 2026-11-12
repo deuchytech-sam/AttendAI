@@ -2,12 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_face_liveness/flutter_face_liveness.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 
 import '../../biometrics/domain/services/face_liveness_service.dart';
 import '../data/datasources/firestore_university_data_source.dart';
 import 'face_enrollment_screen.dart';
 import 'university_bloc.dart';
-import 'university_event.dart';
 
 /// Screen for face liveness verification during check-in using FlutterFaceLiveness widget.
 ///
@@ -53,10 +53,27 @@ class _FaceVerificationScreenState extends State<FaceVerificationScreen> {
     });
 
     try {
+      // A lecturer reset is stored in Firestore. Honor it before consulting
+      // this device's local gallery so stale templates cannot keep being used.
+      if (await widget.dataSource.isFaceEnrollmentResetRequired(
+        widget.userId,
+      )) {
+        await widget.livenessService.deleteTemplate(faceId: widget.userId);
+        await widget.livenessService.clearSyncPending(widget.userId);
+        debugPrint(
+          '[FaceVerification] Cleared locally cached template after lecturer reset for ${widget.userId}',
+        );
+      }
+      await widget.livenessService.refreshStoredFaces();
       // Check local first
-      final hasLocalTemplate = await widget.livenessService.hasTemplate(faceId: widget.userId);
+      final hasLocalTemplate = await widget.livenessService.hasTemplate(
+        faceId: widget.userId,
+      );
 
       if (hasLocalTemplate) {
+        if (await widget.livenessService.isSyncPending(widget.userId)) {
+          await _retryPendingFaceSync();
+        }
         // Face data exists locally, ready for verification
         if (mounted) {
           setState(() {
@@ -67,7 +84,9 @@ class _FaceVerificationScreenState extends State<FaceVerificationScreen> {
       }
 
       // Check cloud
-      final hasCloudTemplate = await widget.dataSource.hasFaceEmbeddings(widget.userId);
+      final hasCloudTemplate = await widget.dataSource.hasFaceEmbeddings(
+        widget.userId,
+      );
 
       if (!hasCloudTemplate) {
         // No face data anywhere - needs enrollment
@@ -88,12 +107,17 @@ class _FaceVerificationScreenState extends State<FaceVerificationScreen> {
         });
       }
 
-      final embeddings = await widget.dataSource.loadFaceEmbeddings(widget.userId);
+      final embeddings = await widget.dataSource.loadFaceEmbeddings(
+        widget.userId,
+      );
 
       if (embeddings != null && embeddings.isNotEmpty) {
         // Import to local FaceIdentityService
         await widget.livenessService.importFace(widget.userId, embeddings);
-        debugPrint('[FaceVerification] Imported ${embeddings.length} embeddings from Firestore for faceId: ${widget.userId}');
+        await widget.livenessService.clearSyncPending(widget.userId);
+        debugPrint(
+          '[FaceVerification] Imported ${embeddings.length} embeddings from Firestore for faceId: ${widget.userId}',
+        );
 
         if (mounted) {
           setState(() {
@@ -105,13 +129,16 @@ class _FaceVerificationScreenState extends State<FaceVerificationScreen> {
         if (mounted) {
           setState(() {
             _needsEnrollment = true;
-            _error = 'Face data found but could not be loaded. Please re-enroll.';
+            _error =
+                'Face data found but could not be loaded. Please re-enroll.';
             _isLoadingFaceData = false;
           });
         }
       }
     } on FirebaseException catch (e) {
-      debugPrint('[FaceVerification] Firebase error loading face data: ${e.code} - ${e.message}');
+      debugPrint(
+        '[FaceVerification] Firebase error loading face data: ${e.code} - ${e.message}',
+      );
       if (mounted) {
         if (e.code == 'permission-denied') {
           setState(() {
@@ -121,13 +148,15 @@ class _FaceVerificationScreenState extends State<FaceVerificationScreen> {
           });
         } else if (e.code == 'unavailable' || e.code == 'deadline-exceeded') {
           setState(() {
-            _error = 'Network error. Please check your connection and try again.';
+            _error =
+                'Network error. Please check your connection and try again.';
             _isLoadingFaceData = false;
             _showRetry = true;
           });
         } else {
           setState(() {
-            _error = 'Failed to load face data: ${e.message}. Please try again.';
+            _error =
+                'Failed to load face data: ${e.message}. Please try again.';
             _isLoadingFaceData = false;
             _showRetry = true;
           });
@@ -145,15 +174,64 @@ class _FaceVerificationScreenState extends State<FaceVerificationScreen> {
     }
   }
 
+  Future<void> _retryPendingFaceSync() async {
+    final embeddings = widget.livenessService.exportFace(widget.userId);
+    if (embeddings == null || embeddings.isEmpty) return;
+    try {
+      await widget.dataSource.saveFaceEmbeddings(
+        faceId: widget.userId,
+        embeddings: embeddings,
+        studentId: widget.userId,
+      );
+      final saved = await widget.dataSource.loadFaceEmbeddings(widget.userId);
+      if (saved == null ||
+          saved.isEmpty ||
+          saved.length != embeddings.length ||
+          saved.any((vector) => vector.length != embeddings.first.length)) {
+        throw StateError('Synced face embedding could not be read back.');
+      }
+      await widget.livenessService.clearSyncPending(widget.userId);
+      debugPrint(
+        '[FaceVerification] Pending face sync completed; '
+        'userId=${widget.userId}, vectors=${saved.length}, '
+        'lengths=${saved.map((vector) => vector.length).toList()}',
+      );
+    } catch (e, stackTrace) {
+      debugPrint(
+        '[FaceVerification] Pending face sync failed: $e\n$stackTrace',
+      );
+      if (mounted) {
+        setState(() {
+          _error = 'Your face is available on this device. Cloud sync is still pending; it will retry next time.';
+        });
+      }
+    }
+  }
+
   void _onVerificationSuccess(LivenessResult result) async {
     if (_isProcessing || !mounted) return;
     _isProcessing = true;
 
     try {
-      if (result.isSuccess && result.faceId != null) {
-        // Face successfully verified
+      if (result.isSuccess) {
+        // Face successfully verified - export embeddings using the student's userId
+        // (face was enrolled with userId as faceId, not result.faceId)
+        final faceId = widget.userId;
+        final faceMatchScore = result.faceMatchScore ?? 0.0;
+        final faceEmbeddings = widget.livenessService.exportFace(faceId);
+
+        if (faceEmbeddings == null || faceEmbeddings.isEmpty) {
+          if (mounted) {
+            setState(() {
+              _error = 'Could not export face data. Please try again.';
+              _isProcessing = false;
+            });
+          }
+          return;
+        }
+
         if (mounted) {
-          _showSuccessDialog(result.faceId!);
+          _showSuccessDialog(faceId, faceEmbeddings, faceMatchScore);
         }
       } else {
         // Verification failed - could be face not recognized
@@ -188,7 +266,11 @@ class _FaceVerificationScreenState extends State<FaceVerificationScreen> {
     });
   }
 
-  void _showSuccessDialog(String faceId) {
+  void _showSuccessDialog(
+    String faceId,
+    List<List<double>> faceEmbeddings,
+    double faceMatchScore,
+  ) {
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -201,13 +283,16 @@ class _FaceVerificationScreenState extends State<FaceVerificationScreen> {
           ],
         ),
         content: Text(
-          'Face verified successfully! (ID: $faceId)',
+          'Face verified successfully! (ID: $faceId)\nMatch: ${(faceMatchScore * 100).toStringAsFixed(1)}%',
         ),
         actions: [
           TextButton(
             onPressed: () {
               Navigator.of(dialogContext).pop(); // Close dialog
-              _recordAttendance(); // Record attendance
+              _recordAttendance(
+                faceEmbeddings,
+                faceMatchScore,
+              ); // Record attendance
             },
             child: const Text('Check In'),
           ),
@@ -216,10 +301,85 @@ class _FaceVerificationScreenState extends State<FaceVerificationScreen> {
     );
   }
 
-  Future<void> _recordAttendance() async {
+  String _friendlyPreconditionMessage(String? serverMessage) {
+    final message = serverMessage?.toLowerCase() ?? '';
+    if (message.contains('student roster record is not linked')) {
+      return 'Your student profile could not be matched to the course roster. Ask your lecturer to check your matric number.';
+    }
+    if (message.contains('multiple roster records') ||
+        message.contains('linked to another account')) {
+      return 'Your student record needs attention. Please contact your lecturer.';
+    }
+    if (message.contains('course enrollment is incomplete')) {
+      return 'Your student account is not linked to a course. Please contact your lecturer.';
+    }
+    if (message.contains('no open attendance session')) {
+      return 'No session is open for your enrolled course. Ask your lecturer to open the correct course session.';
+    }
+    if (message.contains('attendance session is closed') ||
+        message.contains('session is closed or invalid')) {
+      return 'The attendance session closed before check-in completed. Ask your lecturer to reopen it.';
+    }
+    if (message.contains('face not enrolled') ||
+        message.contains('no enrolled face embeddings')) {
+      return 'Your face enrollment could not be found on the server. Please re-enroll your face.';
+    }
+    return 'Check-in could not be completed. Please try again.';
+  }
+
+  Future<void> _recordAttendance(
+    List<List<double>> faceEmbeddings,
+    double faceMatchScore,
+  ) async {
     if (!mounted) return;
-    context.read<UniversityBloc>().add(const StudentCheckInRequested());
-    Navigator.of(context).pop(true);
+    final bloc = context.read<UniversityBloc>();
+    final studentId = bloc.dataSource.userId;
+    final courseId = bloc.state.openSessionCourseId;
+    if (courseId == null || courseId.isEmpty) {
+      setState(() {
+        _error = 'No open course session was found. Ask your lecturer to open the session.';
+        _isProcessing = false;
+      });
+      return;
+    }
+    try {
+      await bloc.dataSource.checkIn(
+        studentId: studentId,
+        courseId: courseId,
+        faceEmbeddings: faceEmbeddings,
+        faceMatchScore: faceMatchScore,
+      );
+      if (mounted) {
+        Navigator.of(context).pop(true);
+      }
+    } on FirebaseFunctionsException catch (e, stackTrace) {
+      debugPrint(
+        '[CheckIn] Cloud Function failed: code=${e.code}, '
+        'message=${e.message}, details=${e.details}\n$stackTrace',
+      );
+      if (mounted) {
+        setState(() {
+          _error = switch (e.code) {
+            'unauthenticated' => 'Your session expired. Please sign in again.',
+            'permission-denied' => 'You do not have permission to check in.',
+            'failed-precondition' =>
+              _friendlyPreconditionMessage(e.message),
+            'not-found' || 'unavailable' || 'deadline-exceeded' || 'internal' =>
+              'Check-in service unavailable, please try again.',
+            _ => 'Check-in could not be completed. Please try again.',
+          };
+          _isProcessing = false;
+        });
+      }
+    } catch (e, stackTrace) {
+      debugPrint('[CheckIn] Failed: $e\n$stackTrace');
+      if (mounted) {
+        setState(() {
+          _error = 'Check-in could not be completed. Please try again.';
+          _isProcessing = false;
+        });
+      }
+    }
   }
 
   Future<void> _openEnrollment() async {
@@ -343,7 +503,10 @@ class _FaceVerificationScreenState extends State<FaceVerificationScreen> {
                         OutlinedButton.icon(
                           onPressed: _retryLoading,
                           icon: const Icon(Icons.refresh, color: Colors.white),
-                          label: const Text('Retry', style: TextStyle(color: Colors.white)),
+                          label: const Text(
+                            'Retry',
+                            style: TextStyle(color: Colors.white),
+                          ),
                           style: OutlinedButton.styleFrom(
                             side: const BorderSide(color: Colors.white),
                           ),

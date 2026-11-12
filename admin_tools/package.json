@@ -3,9 +3,16 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "promote-admin": "node set_university_admin.mjs"
+    "promote-admin": "node set_university_admin.mjs",
+    "migrate:course-lecturers": "node migrate_course_lecturers.mjs",
+    "test:migration": "node --test course_lecturer_migration.test.mjs",
+    "test:rules": "firebase --config ../firebase.json emulators:exec --project demo-attendai-course-assignment --only firestore \"node --test course_assignment.rules.test.mjs course_lecturer_migration.test.mjs\""
   },
   "dependencies": {
     "firebase-admin": "^13.0.0"
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^6.0.0",
+    "firebase": "^13.2.0"
   }
 }

@@ -5,6 +5,7 @@ import '../features/admin/data/datasources/firestore_admin_data_source.dart';
 import '../features/admin/data/repositories/firebase_admin_repository.dart';
 import '../features/admin/domain/usecases/approve_pending_account.dart';
 import '../features/admin/domain/usecases/get_admin_dashboard.dart';
+import '../features/admin/domain/usecases/save_admin_course.dart';
 import '../features/admin/presentation/admin_bloc.dart';
 import '../features/admin/presentation/admin_event.dart';
 import '../features/auth/data/datasources/firebase_auth_data_source.dart';
@@ -25,8 +26,6 @@ import '../features/biometrics/domain/usecases/enroll_student_biometric.dart';
 import '../features/notifications/notification_service.dart';
 import '../features/university/data/datasources/firestore_university_data_source.dart';
 import '../features/university/data/repositories/firebase_university_repository.dart';
-import '../features/university/domain/usecases/add_university_course.dart';
-import '../features/university/domain/usecases/enroll_university_student.dart';
 import '../features/university/domain/usecases/get_university_dashboard.dart';
 import '../features/university/domain/usecases/record_student_check_in.dart';
 import '../features/university/domain/usecases/toggle_attendance_session.dart';
@@ -62,6 +61,7 @@ AdminBloc createAdminBloc(UniversityAccount account) {
   return AdminBloc(
     getDashboard: GetAdminDashboard(repository),
     approveAccount: ApprovePendingAccount(repository),
+    saveCourse: SaveAdminCourse(repository),
   )..add(const AdminDashboardRequested());
 }
 
@@ -93,8 +93,6 @@ UniversityBloc createUniversityBloc(UniversityAccount account) {
   final repository = FirebaseUniversityRepository(dataSource);
   return UniversityBloc(
     getDashboard: GetUniversityDashboard(repository),
-    addCourse: AddUniversityCourse(repository),
-    enrollStudent: EnrollUniversityStudent(repository),
     toggleSession: ToggleAttendanceSession(repository),
     recordCheckIn: RecordStudentCheckIn(repository),
     dataSource: dataSource,

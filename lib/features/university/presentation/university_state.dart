@@ -4,6 +4,7 @@ import '../domain/entities/attendance_entry.dart';
 import '../domain/entities/course.dart';
 import '../domain/entities/university_dashboard.dart';
 import '../domain/entities/university_student.dart';
+import '../data/datasources/firestore_university_data_source.dart';
 
 enum UniversityLoadStatus { initial, loading, loaded, failure }
 
@@ -14,8 +15,17 @@ class UniversityState extends Equatable {
     this.students = const [],
     this.entries = const [],
     this.openSessionCourseId,
+    this.openSessionId,
     this.errorMessage,
     this.actionMessage,
+    // Lecturer attendance
+    this.currentSessionAttendance,
+    this.semesterAttendanceSummary,
+    this.isLoadingSessionAttendance = false,
+    this.isLoadingSemesterSummary = false,
+    // Student attendance history
+    this.studentAttendanceHistory,
+    this.isLoadingStudentHistory = false,
   });
 
   final UniversityLoadStatus status;
@@ -23,8 +33,19 @@ class UniversityState extends Equatable {
   final List<UniversityStudent> students;
   final List<AttendanceEntry> entries;
   final String? openSessionCourseId;
+  final String? openSessionId;
   final String? errorMessage;
   final String? actionMessage;
+
+  // Lecturer attendance state
+  final SessionAttendance? currentSessionAttendance;
+  final SemesterAttendanceSummary? semesterAttendanceSummary;
+  final bool isLoadingSessionAttendance;
+  final bool isLoadingSemesterSummary;
+
+  // Student attendance history state
+  final StudentAttendanceHistory? studentAttendanceHistory;
+  final bool isLoadingStudentHistory;
 
   UniversityState withDashboard(
     UniversityDashboard dashboard, {
@@ -35,6 +56,7 @@ class UniversityState extends Equatable {
     students: dashboard.students,
     entries: dashboard.entries,
     openSessionCourseId: dashboard.openSessionCourseId,
+    openSessionId: dashboard.openSessionId,
     actionMessage: actionMessage,
   );
 
@@ -44,16 +66,30 @@ class UniversityState extends Equatable {
     List<UniversityStudent>? students,
     List<AttendanceEntry>? entries,
     String? openSessionCourseId,
+    String? openSessionId,
     String? errorMessage,
     String? actionMessage,
+    SessionAttendance? currentSessionAttendance,
+    SemesterAttendanceSummary? semesterAttendanceSummary,
+    bool? isLoadingSessionAttendance,
+    bool? isLoadingSemesterSummary,
+    StudentAttendanceHistory? studentAttendanceHistory,
+    bool? isLoadingStudentHistory,
   }) => UniversityState(
     status: status ?? this.status,
     courses: courses ?? this.courses,
     students: students ?? this.students,
     entries: entries ?? this.entries,
     openSessionCourseId: openSessionCourseId ?? this.openSessionCourseId,
+    openSessionId: openSessionId ?? this.openSessionId,
     errorMessage: errorMessage ?? this.errorMessage,
     actionMessage: actionMessage ?? this.actionMessage,
+    currentSessionAttendance: currentSessionAttendance ?? this.currentSessionAttendance,
+    semesterAttendanceSummary: semesterAttendanceSummary ?? this.semesterAttendanceSummary,
+    isLoadingSessionAttendance: isLoadingSessionAttendance ?? this.isLoadingSessionAttendance,
+    isLoadingSemesterSummary: isLoadingSemesterSummary ?? this.isLoadingSemesterSummary,
+    studentAttendanceHistory: studentAttendanceHistory ?? this.studentAttendanceHistory,
+    isLoadingStudentHistory: isLoadingStudentHistory ?? this.isLoadingStudentHistory,
   );
 
   int presentFor(String courseId) =>
@@ -69,7 +105,14 @@ class UniversityState extends Equatable {
     students,
     entries,
     openSessionCourseId,
+    openSessionId,
     errorMessage,
     actionMessage,
+    currentSessionAttendance,
+    semesterAttendanceSummary,
+    isLoadingSessionAttendance,
+    isLoadingSemesterSummary,
+    studentAttendanceHistory,
+    isLoadingStudentHistory,
   ];
 }

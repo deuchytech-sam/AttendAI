@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:cloud_functions/cloud_functions.dart';
+import 'package:intl/intl.dart';
 
 import '../../../app/theme/app_theme.dart';
+import '../../notifications/notification_service.dart';
 import '../domain/entities/course.dart';
 import '../domain/entities/university_role.dart';
 import '../domain/entities/university_student.dart';
@@ -10,6 +13,8 @@ import 'university_event.dart';
 import 'university_state.dart';
 import 'face_verification_screen.dart';
 import 'face_enrollment_screen.dart';
+import 'lecturer_attendance_page.dart';
+import '../data/datasources/firestore_university_data_source.dart';
 
 class UniversityHomePage extends StatefulWidget {
   const UniversityHomePage({
@@ -36,7 +41,7 @@ class _UniversityHomePageState extends State<UniversityHomePage> {
 
   UniversityRole get _role => widget.role;
 
-  String get _universityId => widget.universityId;
+  String get fcc_universityId => widget.universityId;
 
   @override
   void initState() {
@@ -157,6 +162,11 @@ class _UniversityHomePageState extends State<UniversityHomePage> {
                 ..hideCurrentSnackBar()
                 ..showSnackBar(SnackBar(content: Text(message)));
             }
+
+            // Initialize FCM notifications when dashboard is loaded
+            if (state.status == UniversityLoadStatus.loaded) {
+              _initializeNotifications(context, state);
+            }
           },
           builder: (context, state) {
             if (state.status == UniversityLoadStatus.initial ||
@@ -183,6 +193,33 @@ class _UniversityHomePageState extends State<UniversityHomePage> {
                     return course.id == state.openSessionCourseId;
                   }).firstOrNull;
 
+            // Check if student has already checked in for the current session
+            bool hasCheckedIn = false;
+            DateTime? checkedInTime;
+            if (!isLecturer &&
+                openSessionCourse != null &&
+                widget.matricNumber != null) {
+              // Find the student record for this user
+              final student = state.students
+                  .where((s) => s.matricNumber == widget.matricNumber)
+                  .firstOrNull;
+              if (student != null) {
+                // Find attendance entry for this student in the current session
+                final entry = state.entries
+                    .where(
+                      (e) =>
+                          e.studentId == student.id &&
+                          e.courseId == openSessionCourse.id &&
+                          e.sessionId == state.openSessionId,
+                    )
+                    .firstOrNull;
+                if (entry != null) {
+                  hasCheckedIn = true;
+                  checkedInTime = entry.checkedAt;
+                }
+              }
+            }
+
             return Column(
               children: [
                 if (openSessionCourse != null ||
@@ -191,9 +228,11 @@ class _UniversityHomePageState extends State<UniversityHomePage> {
                     course: openSessionCourse,
                     message: state.actionMessage,
                     onDismiss: () => _dismissActionMessage(context),
-                    onCheckIn: !isLecturer
+                    onCheckIn: !isLecturer && !hasCheckedIn
                         ? () => _startFaceVerification(context)
                         : null,
+                    hasCheckedIn: hasCheckedIn,
+                    checkedInTime: checkedInTime,
                   ),
                 Expanded(
                   child: IndexedStack(
@@ -203,20 +242,16 @@ class _UniversityHomePageState extends State<UniversityHomePage> {
                         role: _role,
                         displayName: widget.displayName,
                         matricNumber: widget.matricNumber,
-                        onAddStudent: _addStudent,
-                        onAddCourse: _addCourse,
                         onOpenAttendance: () => setState(() => _tab = 2),
                       ),
-                      _CoursesPage(
-                        role: _role,
-                        onAddCourse: _addCourse,
-                        onAddStudent: _addStudent,
-                      ),
+                      _CoursesPage(role: _role),
                       _AttendancePage(
                         role: _role,
                         universityId: widget.universityId,
+                        matricNumber: widget.matricNumber,
                       ),
                       _ReportsPage(role: _role),
+                      if (isLecturer) const LecturerAttendancePage(),
                       if (isLecturer) const _StudentsPage(),
                     ],
                   ),
@@ -252,6 +287,12 @@ class _UniversityHomePageState extends State<UniversityHomePage> {
           ),
           if (isLecturer)
             const NavigationDestination(
+              icon: Icon(Icons.fact_check_outlined),
+              selectedIcon: Icon(Icons.fact_check_rounded),
+              label: 'Lecturer',
+            ),
+          if (isLecturer)
+            const NavigationDestination(
               icon: Icon(Icons.people_alt_outlined),
               selectedIcon: Icon(Icons.people_alt_rounded),
               label: 'Students',
@@ -269,6 +310,21 @@ class _UniversityHomePageState extends State<UniversityHomePage> {
 
   void _dismissActionMessage(BuildContext context) {
     context.read<UniversityBloc>().add(const ActionMessageDismissed());
+  }
+
+  void _initializeNotifications(BuildContext context, UniversityState state) {
+    final bloc = context.read<UniversityBloc>();
+    final userId = bloc.dataSource.userId;
+    final universityId = widget.universityId;
+
+    // Get enrolled course IDs from state.courses
+    final enrolledCourseIds = state.courses.map((c) => c.id).toList();
+
+    NotificationService().initialize(
+      userId: userId,
+      universityId: universityId,
+      enrolledCourseIds: enrolledCourseIds,
+    );
   }
 
   Future<void> _startFaceVerification(BuildContext context) async {
@@ -294,7 +350,19 @@ class _UniversityHomePageState extends State<UniversityHomePage> {
       ),
     );
 
-    if (result == true && mounted) {
+    if (result == true && context.mounted) {
+      final bloc = context.read<UniversityBloc>();
+      bloc.add(const UniversityDashboardRequested());
+      if (_role == UniversityRole.student) {
+        final now = DateTime.now();
+        bloc.add(
+          StudentAttendanceHistoryRequested(
+            courseId: bloc.state.openSessionCourseId,
+            semesterStart: DateTime(now.year, 1, 1),
+            semesterEnd: DateTime(now.year, 12, 31),
+          ),
+        );
+      }
       _notice('Check-in recorded successfully!');
     }
   }
@@ -305,49 +373,6 @@ class _UniversityHomePageState extends State<UniversityHomePage> {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(SnackBar(content: Text(message)));
-  }
-
-  Future<void> _addCourse() async {
-    final values = await _textFields(
-      context,
-      title: 'Add a course',
-      fields: const [
-        ('Course title', 'e.g. CSC 305 · Algorithms'),
-        ('Lecturer', 'Lecturer name'),
-        ('Schedule and venue', 'e.g. Thu · 11:00 AM · LT 1'),
-      ],
-    );
-
-    if (values == null || values[0].isEmpty || !mounted) return;
-
-    context.read<UniversityBloc>().add(
-      UniversityCourseAdded(
-        name: values[0],
-        lecturer: values[1].isEmpty ? 'Unassigned' : values[1],
-        schedule: values[2].isEmpty ? 'Schedule to be announced' : values[2],
-      ),
-    );
-  }
-
-  Future<void> _addStudent() async {
-    final state = context.read<UniversityBloc>().state;
-    final values = await _studentFields(context, state.courses);
-
-    if (values == null ||
-        values[0].isEmpty ||
-        values[1].isEmpty ||
-        values[2].isEmpty ||
-        !mounted) {
-      return;
-    }
-
-    context.read<UniversityBloc>().add(
-      UniversityStudentEnrolled(
-        name: values[0],
-        matricNumber: values[1],
-        courseId: values[2],
-      ),
-    );
   }
 }
 
@@ -361,165 +386,13 @@ String _initials(String name) {
       .join();
 }
 
-Future<List<String>?> _textFields(
-  BuildContext context, {
-  required String title,
-  required List<(String, String)> fields,
-}) async {
-  final controllers = List.generate(
-    fields.length,
-    (_) => TextEditingController(),
-  );
-
-  try {
-    return await showDialog<List<String>>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(title),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              for (var i = 0; i < fields.length; i++) ...[
-                TextField(
-                  controller: controllers[i],
-                  textCapitalization: TextCapitalization.sentences,
-                  decoration: InputDecoration(
-                    labelText: fields[i].$1,
-                    hintText: fields[i].$2,
-                    border: const OutlineInputBorder(),
-                  ),
-                ),
-                if (i < fields.length - 1) const SizedBox(height: 14),
-              ],
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () {
-              Navigator.pop(
-                dialogContext,
-                controllers
-                    .map((controller) => controller.text.trim())
-                    .toList(),
-              );
-            },
-            child: const Text('Save'),
-          ),
-        ],
-      ),
-    );
-  } finally {
-    for (final controller in controllers) {
-      controller.dispose();
-    }
-  }
-}
-
-Future<List<String>?> _studentFields(
-  BuildContext context,
-  List<Course> courses,
-) async {
-  final nameController = TextEditingController();
-  final matricController = TextEditingController();
-  var selectedCourseId = courses.isNotEmpty ? courses.first.id : '';
-
-  try {
-    return await showDialog<List<String>>(
-      context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: const Text('Enroll student'),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: nameController,
-                  textCapitalization: TextCapitalization.words,
-                  decoration: const InputDecoration(
-                    labelText: 'Student name',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 14),
-                TextField(
-                  controller: matricController,
-                  decoration: const InputDecoration(
-                    labelText: 'Matriculation number',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 14),
-                if (courses.isEmpty)
-                  const Text('Create a course before enrolling a student.')
-                else
-                  DropdownButtonFormField<String>(
-                    value: selectedCourseId,
-                    isExpanded: true,
-                    decoration: const InputDecoration(
-                      labelText: 'Course',
-                      border: OutlineInputBorder(),
-                    ),
-                    items: courses
-                        .map(
-                          (course) => DropdownMenuItem<String>(
-                            value: course.id,
-                            child: Text(
-                              course.name,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                        )
-                        .toList(),
-                    onChanged: (value) {
-                      if (value != null) {
-                        setDialogState(() {
-                          selectedCourseId = value;
-                        });
-                      }
-                    },
-                  ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: courses.isEmpty
-                  ? null
-                  : () {
-                      Navigator.pop(dialogContext, [
-                        nameController.text.trim(),
-                        matricController.text.trim(),
-                        selectedCourseId,
-                      ]);
-                    },
-              child: const Text('Enroll'),
-            ),
-          ],
-        ),
-      ),
-    );
-  } finally {
-    nameController.dispose();
-    matricController.dispose();
-  }
-}
-
 class _SessionNotificationBanner extends StatelessWidget {
   const _SessionNotificationBanner({
     required this.course,
     required this.message,
     required this.onDismiss,
+    required this.hasCheckedIn,
+    required this.checkedInTime,
     this.onCheckIn,
   });
 
@@ -527,13 +400,14 @@ class _SessionNotificationBanner extends StatelessWidget {
   final String? message;
   final VoidCallback onDismiss;
   final VoidCallback? onCheckIn;
+  final bool hasCheckedIn;
+  final DateTime? checkedInTime;
 
   @override
   Widget build(BuildContext context) {
     final isOpen = course != null;
     final courseName = course?.name ?? 'this course';
     final msg = message ?? '';
-
     final foreground = isOpen
         ? const Color(0xFF1B5E20)
         : const Color(0xFF4A148C);
@@ -594,12 +468,29 @@ class _SessionNotificationBanner extends StatelessWidget {
               ),
               IconButton(
                 onPressed: onDismiss,
-                tooltip: 'Refresh dashboard',
+                tooltip: 'Dismiss notification',
                 icon: const Icon(Icons.close_rounded, size: 20),
               ),
             ],
           ),
-          if (isOpen && onCheckIn != null) ...[
+          if (isOpen && hasCheckedIn) ...[
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Icon(Icons.check_circle_rounded, color: foreground, size: 20),
+                const SizedBox(width: 8),
+                Text(
+                  checkedInTime == null
+                      ? 'You have checked in.'
+                      : 'Checked in at ${DateFormat('HH:mm:ss').format(checkedInTime!)}',
+                  style: TextStyle(
+                    color: foreground,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ] else if (isOpen && onCheckIn != null) ...[
             const SizedBox(height: 12),
             SizedBox(
               width: double.infinity,
@@ -624,16 +515,12 @@ class _OverviewPage extends StatelessWidget {
   const _OverviewPage({
     required this.role,
     required this.displayName,
-    required this.onAddStudent,
-    required this.onAddCourse,
     required this.onOpenAttendance,
     this.matricNumber,
   });
 
   final UniversityRole role;
   final String displayName;
-  final VoidCallback onAddStudent;
-  final VoidCallback onAddCourse;
   final VoidCallback onOpenAttendance;
   final String? matricNumber;
 
@@ -766,20 +653,6 @@ class _OverviewPage extends StatelessWidget {
             const SizedBox(height: 26),
             const _SectionHeading(title: 'Quick actions'),
             const SizedBox(height: 12),
-            if (isLecturer) ...[
-              _ActionTile(
-                icon: Icons.add_circle_outline_rounded,
-                title: 'Create a course',
-                subtitle: 'Add a course, lecturer, and schedule.',
-                onTap: onAddCourse,
-              ),
-              _ActionTile(
-                icon: Icons.person_add_alt_1_rounded,
-                title: 'Enroll a student',
-                subtitle: 'Register a student for a course.',
-                onTap: onAddStudent,
-              ),
-            ],
             _ActionTile(
               icon: Icons.fact_check_outlined,
               title: 'Attendance',
@@ -794,10 +667,8 @@ class _OverviewPage extends StatelessWidget {
                 icon: Icons.menu_book_outlined,
                 title: 'No courses yet',
                 message: isLecturer
-                    ? 'Create your first course to get started.'
+                    ? 'Courses assigned by your school admin will appear here.'
                     : 'Your assigned courses will appear here.',
-                actionLabel: isLecturer ? 'Add course' : null,
-                onAction: isLecturer ? onAddCourse : null,
               )
             else
               ...courses
@@ -809,8 +680,8 @@ class _OverviewPage extends StatelessWidget {
                       isLecturer: isLecturer,
                       onToggleSession: isLecturer
                           ? () => context.read<UniversityBloc>().add(
-                                AttendanceSessionToggled(course.id),
-                              )
+                              AttendanceSessionToggled(course.id),
+                            )
                           : null,
                     ),
                   ),
@@ -822,15 +693,9 @@ class _OverviewPage extends StatelessWidget {
 }
 
 class _CoursesPage extends StatelessWidget {
-  const _CoursesPage({
-    required this.role,
-    required this.onAddCourse,
-    required this.onAddStudent,
-  });
+  const _CoursesPage({required this.role});
 
   final UniversityRole role;
-  final VoidCallback onAddCourse;
-  final VoidCallback onAddStudent;
 
   @override
   Widget build(BuildContext context) {
@@ -851,12 +716,6 @@ class _CoursesPage extends StatelessWidget {
                         ?.copyWith(fontWeight: FontWeight.w800),
                   ),
                 ),
-                if (isLecturer)
-                  FilledButton.icon(
-                    onPressed: onAddCourse,
-                    icon: const Icon(Icons.add, size: 18),
-                    label: const Text('Add course'),
-                  ),
               ],
             ),
             const SizedBox(height: 8),
@@ -870,10 +729,8 @@ class _CoursesPage extends StatelessWidget {
                 icon: Icons.menu_book_outlined,
                 title: 'No courses available',
                 message: isLecturer
-                    ? 'Add your first course to get started.'
+                    ? 'Courses assigned by your school admin will appear here.'
                     : 'Your assigned courses will appear here.',
-                actionLabel: isLecturer ? 'Create course' : null,
-                onAction: isLecturer ? onAddCourse : null,
               )
             else
               ...courses.map(
@@ -883,20 +740,11 @@ class _CoursesPage extends StatelessWidget {
                   isLecturer: isLecturer,
                   onToggleSession: isLecturer
                       ? () => context.read<UniversityBloc>().add(
-                            AttendanceSessionToggled(course.id),
-                          )
+                          AttendanceSessionToggled(course.id),
+                        )
                       : null,
                 ),
               ),
-            if (isLecturer && courses.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              _ActionTile(
-                icon: Icons.person_add_alt_1_rounded,
-                title: 'Enroll a student',
-                subtitle: 'Register a student for a course.',
-                onTap: onAddStudent,
-              ),
-            ],
           ],
         );
       },
@@ -905,19 +753,30 @@ class _CoursesPage extends StatelessWidget {
 }
 
 class _AttendancePage extends StatelessWidget {
-  const _AttendancePage({required this.role, required this.universityId});
+  const _AttendancePage({
+    required this.role,
+    required this.universityId,
+    this.matricNumber,
+  });
 
   final UniversityRole role;
   final String universityId;
+  final String? matricNumber;
 
   Future<void> _requestEnrollment(BuildContext context) async {
     final state = context.read<UniversityBloc>().state;
-    final students = state.students.where((s) => s.userId != null && s.userId!.isNotEmpty).toList();
+    final students = state.students
+        .where((s) => s.userId != null && s.userId!.isNotEmpty)
+        .toList();
 
     if (students.isEmpty) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No students with linked Firebase accounts found. Students must sign in first to link their account.')),
+          const SnackBar(
+            content: Text(
+              'No students with linked Firebase accounts found. Students must sign in first to link their account.',
+            ),
+          ),
         );
       }
       return;
@@ -1006,11 +865,17 @@ class _AttendancePage extends StatelessWidget {
 
     if (enrolled == true) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Face enrolled successfully for ${selectedStudent.name}.')),
+        SnackBar(
+          content: Text(
+            'Face enrolled successfully for ${selectedStudent.name}.',
+          ),
+        ),
       );
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Face enrollment was cancelled or failed.')),
+        const SnackBar(
+          content: Text('Face enrollment was cancelled or failed.'),
+        ),
       );
     }
   }
@@ -1026,6 +891,34 @@ class _AttendancePage extends StatelessWidget {
             : state.courses
                   .where((course) => course.id == state.openSessionCourseId)
                   .firstOrNull;
+
+        // For students, find their student record to check attendance status
+        UniversityStudent? currentStudent;
+        if (!isLecturer && matricNumber != null) {
+          currentStudent = state.students
+              .where((s) => s.matricNumber == matricNumber)
+              .firstOrNull;
+        }
+
+        // Check if student has checked in for the current session
+        bool hasCheckedIn = false;
+        DateTime? checkedInTime;
+        final openCourseId = openCourse?.id;
+        final currentStudentId = currentStudent?.id;
+        if (!isLecturer && openCourseId != null && currentStudentId != null) {
+          final entry = state.entries
+              .where(
+                (e) =>
+                    e.studentId == currentStudentId &&
+                    e.courseId == openCourseId &&
+                    e.sessionId == state.openSessionId,
+              )
+              .firstOrNull;
+          if (entry != null) {
+            hasCheckedIn = true;
+            checkedInTime = entry.checkedAt;
+          }
+        }
 
         return ListView(
           padding: const EdgeInsets.all(20),
@@ -1083,6 +976,51 @@ class _AttendancePage extends StatelessWidget {
                         : 'When a lecturer opens a session, its status will appear here.',
                     style: TextStyle(color: Colors.grey.shade700, height: 1.5),
                   ),
+                  if (!isLecturer && openCourse != null && hasCheckedIn) ...[
+                    const SizedBox(height: 16),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: Colors.green.shade50,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.green.shade200),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.check_circle_rounded,
+                            color: Colors.green.shade700,
+                            size: 28,
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Checked in',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 16,
+                                    color: Colors.green.shade800,
+                                  ),
+                                ),
+                                if (checkedInTime != null)
+                                  Text(
+                                    'At ${DateFormat('HH:mm:ss').format(checkedInTime!)}',
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      color: Colors.green.shade700,
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -1128,11 +1066,20 @@ class _AttendancePage extends StatelessWidget {
                   isLecturer: isLecturer,
                   onToggleSession: isLecturer
                       ? () => context.read<UniversityBloc>().add(
-                            AttendanceSessionToggled(course.id),
-                          )
+                          AttendanceSessionToggled(course.id),
+                        )
                       : null,
                 ),
               ),
+            // Student attendance history
+            if (!isLecturer) ...[
+              const SizedBox(height: 24),
+              _StudentAttendanceHistorySection(
+                state: state,
+                matricNumber: matricNumber,
+                universityId: universityId,
+              ),
+            ],
           ],
         );
       },
@@ -1206,8 +1153,8 @@ class _ReportsPage extends StatelessWidget {
                   isLecturer: isLecturer,
                   onToggleSession: isLecturer
                       ? () => context.read<UniversityBloc>().add(
-                            AttendanceSessionToggled(course.id),
-                          )
+                          AttendanceSessionToggled(course.id),
+                        )
                       : null,
                 ),
               ),
@@ -1227,36 +1174,225 @@ class _ReportsPage extends StatelessWidget {
 class _StudentsPage extends StatelessWidget {
   const _StudentsPage();
 
-  @override
-  Widget build(BuildContext context) {
-    return ListView(
-      padding: const EdgeInsets.all(20),
-      children: [
-        Text(
-          'Students',
-          style: Theme.of(context).textTheme.headlineSmall
-              ?.copyWith(fontWeight: FontWeight.w800),
-        ),
-        const SizedBox(height: 8),
-        Text(
-          'Student enrollment and biometric setup.',
-          style: TextStyle(color: Colors.grey.shade600),
-        ),
-        const SizedBox(height: 24),
-        const _InfoCard(
-          icon: Icons.people_alt_outlined,
-          title: 'Student management',
-          message: 'Use Enroll a student on the Courses page to register a student. A full student directory requires the student list in UniversityState.',
-        ),
-        const SizedBox(height: 12),
-        const _InfoCard(
-          icon: Icons.face_retouching_natural_rounded,
-          title: 'Face enrollment',
-          message: 'Use the Attendance page to start biometric enrollment for an existing student.',
-        ),
-      ],
-    );
+  Future<void> _repairLink(
+    BuildContext context,
+    UniversityStudent student,
+  ) async {
+    try {
+      final result = await context
+          .read<UniversityBloc>()
+          .dataSource
+          .linkStudentRosterRecord(student.id);
+      if (!context.mounted) return;
+      context.read<UniversityBloc>().add(const UniversityDashboardRequested());
+      final displayName = result['displayName'] as String? ?? student.name;
+      final email = result['email'] as String? ?? '';
+      final message = email.isEmpty
+          ? 'Linked ' +
+                student.name +
+                ' to the account for ' +
+                displayName +
+                '.'
+          : 'Linked ' +
+                student.name +
+                ' to ' +
+                displayName +
+                ' (' +
+                email +
+                ').';
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(SnackBar(content: Text(message)));
+    } on FirebaseFunctionsException catch (error, stackTrace) {
+      debugPrint(
+        '[StudentLinkRepair] code=' +
+            error.code +
+            ', message=' +
+            (error.message ?? '') +
+            ', details=' +
+            (error.details?.toString() ?? '') +
+            '\n' +
+            stackTrace.toString(),
+      );
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(
+              error.message ?? 'Could not repair this student link.',
+            ),
+          ),
+        );
+    } catch (error, stackTrace) {
+      debugPrint(
+        '[StudentLinkRepair] ' +
+            error.toString() +
+            '\n' +
+            stackTrace.toString(),
+      );
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Could not repair this student link. Please try again.',
+            ),
+          ),
+        );
+    }
   }
+
+  Future<void> _resetFaceEnrollment(
+    BuildContext context,
+    UniversityStudent student,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        icon: const Icon(Icons.face_retouching_off_rounded),
+        title: const Text('Reset face enrollment?'),
+        content: Text(
+          'This will remove ${student.name}\'s current face template. '
+          'They will need to enroll again before checking in.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Reset face'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+    try {
+      await context
+          .read<UniversityBloc>()
+          .dataSource
+          .resetStudentFaceEnrollment(student.id);
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(
+              '${student.name}\'s face was reset. They can enroll again now.',
+            ),
+          ),
+        );
+    } on FirebaseFunctionsException catch (error, stackTrace) {
+      debugPrint(
+        '[FaceEnrollmentReset] code=${error.code}, message=${error.message}, '
+        'details=${error.details}\n$stackTrace',
+      );
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(error.message ?? 'Could not reset face enrollment.'),
+          ),
+        );
+    } catch (error, stackTrace) {
+      debugPrint('[FaceEnrollmentReset] $error\n$stackTrace');
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text('Could not reset face enrollment. Please try again.'),
+          ),
+        );
+    }
+  }
+
+  @override
+  Widget build(
+    BuildContext context,
+  ) => BlocBuilder<UniversityBloc, UniversityState>(
+    builder: (context, state) {
+      final students = [...state.students]
+        ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+      return ListView(
+        padding: const EdgeInsets.all(20),
+        children: [
+          Text(
+            'Students',
+            style: Theme.of(context).textTheme.headlineSmall
+                ?.copyWith(fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Review course enrollment and repair student account links.',
+            style: TextStyle(color: Colors.grey.shade600),
+          ),
+          const SizedBox(height: 20),
+          if (students.isEmpty)
+            const _EmptyState(
+              icon: Icons.people_alt_outlined,
+              title: 'No students enrolled',
+              message: 'Enroll a student from the Courses page first.',
+            )
+          else
+            ...students.map((student) {
+              final course = state.courses
+                  .where((item) => item.id == student.courseId)
+                  .firstOrNull;
+              final accountStatus = student.userId == null
+                  ? 'Account not linked'
+                  : 'Account linked';
+              return Card(
+                margin: const EdgeInsets.only(bottom: 10),
+                child: ListTile(
+                  leading: CircleAvatar(child: Text(_initials(student.name))),
+                  title: Text(student.name),
+                  subtitle: Text(
+                    student.matricNumber +
+                        ' � ' +
+                        (course?.name ?? student.courseId) +
+                        '\n' +
+                        accountStatus,
+                  ),
+                  isThreeLine: true,
+                  trailing: Wrap(
+                    spacing: 2,
+                    children: [
+                      IconButton(
+                        tooltip: 'Repair account link',
+                        onPressed: () => _repairLink(context, student),
+                        icon: Icon(
+                          student.userId == null
+                              ? Icons.link_rounded
+                              : Icons.manage_accounts_outlined,
+                        ),
+                      ),
+                      if (student.userId != null && student.userId!.isNotEmpty)
+                        IconButton(
+                          tooltip: 'Reset face enrollment',
+                          onPressed: () =>
+                              _resetFaceEnrollment(context, student),
+                          icon: const Icon(Icons.face_retouching_off_rounded),
+                        ),
+                    ],
+                  ),
+                ),
+              );
+            }),
+          const SizedBox(height: 16),
+          const _InfoCard(
+            icon: Icons.face_retouching_natural_rounded,
+            title: 'Face enrollment',
+            message: 'Use the Attendance page to start biometric enrollment for an existing student.',
+          ),
+        ],
+      );
+    },
+  );
 }
 
 class _DashboardMetric extends StatelessWidget {
@@ -1385,12 +1521,20 @@ class _CourseCard extends StatelessWidget {
             const SizedBox(width: 8),
             FilledButton.icon(
               onPressed: onToggleSession,
-              icon: Icon(isOpen ? Icons.stop_circle_rounded : Icons.play_circle_fill_rounded, size: 18),
+              icon: Icon(
+                isOpen
+                    ? Icons.stop_circle_rounded
+                    : Icons.play_circle_fill_rounded,
+                size: 18,
+              ),
               label: Text(isOpen ? 'Close session' : 'Open session'),
               style: FilledButton.styleFrom(
                 backgroundColor: isOpen ? Colors.red.shade600 : AppTheme.teal,
                 foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 10,
+                ),
               ),
             ),
           ] else if (isOpen)
@@ -1538,6 +1682,316 @@ class _InfoCard extends StatelessWidget {
                 ),
               ],
             ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _StudentAttendanceHistorySection extends StatelessWidget {
+  const _StudentAttendanceHistorySection({
+    required this.state,
+    required this.matricNumber,
+    required this.universityId,
+  });
+
+  final UniversityState state;
+  final String? matricNumber;
+  final String universityId;
+
+  @override
+  Widget build(BuildContext context) {
+    if (matricNumber == null || matricNumber!.isEmpty) {
+      return const _EmptyState(
+        icon: Icons.person_off_outlined,
+        title: 'Matric number not set',
+        message:
+            'Your matriculation number is required to view attendance history.',
+      );
+    }
+
+    final student = state.students
+        .where((s) => s.matricNumber == matricNumber)
+        .firstOrNull;
+
+    if (student == null) {
+      return const _EmptyState(
+        icon: Icons.person_search_outlined,
+        title: 'Student record not found',
+        message:
+            'Your student record could not be found. Contact your lecturer.',
+      );
+    }
+
+    // Check if history is loading
+    if (state.isLoadingStudentHistory) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.all(24),
+          child: CircularProgressIndicator(),
+        ),
+      );
+    }
+
+    final history = state.studentAttendanceHistory;
+
+    if (history == null) {
+      // Provide a button to load history
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const _SectionHeading(title: 'My Attendance History'),
+          const SizedBox(height: 12),
+          _EmptyState(
+            icon: Icons.history_outlined,
+            title: 'Attendance history not loaded',
+            message:
+                'Tap to load your attendance records for the current semester.',
+            actionLabel: 'Load History',
+            onAction: () {
+              context.read<UniversityBloc>().add(
+                StudentAttendanceHistoryRequested(
+                  semesterStart: DateTime(DateTime.now().year, 1, 1),
+                  semesterEnd: DateTime(DateTime.now().year, 12, 31),
+                ),
+              );
+            },
+          ),
+        ],
+      );
+    }
+
+    if (history.history.isEmpty) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const _SectionHeading(title: 'My Attendance History'),
+          const SizedBox(height: 12),
+          _EmptyState(
+            icon: Icons.history_outlined,
+            title: 'No attendance records',
+            message:
+                'Your attendance history for this semester will appear here.',
+          ),
+        ],
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                'My Attendance History',
+                style: Theme.of(context).textTheme.titleLarge
+                    ?.copyWith(fontWeight: FontWeight.w800),
+              ),
+            ),
+            TextButton.icon(
+              onPressed: () {
+                context.read<UniversityBloc>().add(
+                  StudentAttendanceHistoryRequested(
+                    semesterStart: DateTime(DateTime.now().year, 1, 1),
+                    semesterEnd: DateTime(DateTime.now().year, 12, 31),
+                  ),
+                );
+              },
+              icon: const Icon(Icons.refresh_rounded, size: 18),
+              label: const Text('Refresh'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        _SemesterSummaryCard(history: history),
+        const SizedBox(height: 16),
+        ...history.history.map((entry) => _HistoryEntryTile(entry: entry)),
+      ],
+    );
+  }
+}
+
+class _SemesterSummaryCard extends StatelessWidget {
+  const _SemesterSummaryCard({required this.history});
+
+  final StudentAttendanceHistory history;
+
+  @override
+  Widget build(BuildContext context) {
+    final percentageColor = history.percentage >= 75
+        ? Colors.green
+        : history.percentage >= 50
+        ? Colors.orange
+        : Colors.red;
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Theme.of(context).cardColor,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.grey.withValues(alpha: 0.15)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Semester Summary',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 16,
+                        color: Colors.grey.shade700,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '${history.courseId.isEmpty ? 'All Courses' : history.courseId}',
+                      style: TextStyle(
+                        color: Colors.grey.shade600,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    '${history.attendedCount}/${history.totalSessions}',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 24,
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: percentageColor.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      '${history.percentage}%',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 14,
+                        color: percentageColor,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          LinearProgressIndicator(
+            value: history.totalSessions > 0
+                ? history.attendedCount / history.totalSessions
+                : 0,
+            backgroundColor: Colors.grey.shade200,
+            valueColor: AlwaysStoppedAnimation<Color>(percentageColor),
+            minHeight: 8,
+            borderRadius: BorderRadius.circular(4),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Semester: ${history.semesterStart} to ${history.semesterEnd}',
+            style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _HistoryEntryTile extends StatelessWidget {
+  const _HistoryEntryTile({required this.entry});
+
+  final StudentHistoryEntry entry;
+
+  @override
+  Widget build(BuildContext context) {
+    final statusColor = entry.checkedIn ? Colors.green : Colors.red;
+    final statusIcon = entry.checkedIn
+        ? Icons.check_circle_rounded
+        : Icons.cancel_rounded;
+    final statusText = entry.checkedIn ? 'Present' : 'Absent';
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Theme.of(context).cardColor,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey.withValues(alpha: 0.15)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: statusColor.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(statusIcon, color: statusColor, size: 22),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  entry.courseId,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 14,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  '${entry.sessionDate} · ${entry.sessionStatus}',
+                  style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                ),
+                if (entry.checkedIn && entry.checkedAt != null) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    'Checked in: ${entry.checkedAt}',
+                    style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                statusText,
+                style: TextStyle(
+                  fontWeight: FontWeight.w700,
+                  fontSize: 13,
+                  color: statusColor,
+                ),
+              ),
+              if (entry.faceMatchScore != null) ...[
+                const SizedBox(height: 2),
+                Text(
+                  'Match: ${(entry.faceMatchScore! * 100).toStringAsFixed(1)}%',
+                  style: TextStyle(fontSize: 10, color: Colors.grey.shade500),
+                ),
+              ],
+            ],
           ),
         ],
       ),

@@ -5,6 +5,7 @@ import '../domain/entities/university_account.dart';
 enum AuthStatus {
   checking,
   loading,
+  submitting,
   signedOut,
   pending,
   authenticated,

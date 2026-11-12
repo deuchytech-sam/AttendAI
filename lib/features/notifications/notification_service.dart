@@ -114,8 +114,12 @@ class NotificationService {
   }
 
   /// Saves FCM token to Firestore for server-side push notifications.
-  Future<void> _saveTokenToFirestore(String token) async {
+  /// Only writes if user is signed in, universityId is set, and token is a non-empty string.
+  /// Uses update() with ONLY fcmToken and tokenUpdatedAt fields.
+  Future<void> _saveTokenToFirestore(String? token) async {
+    // Validate: user must be signed in, universityId set, token must be non-null non-empty string
     if (_currentUserId == null || _universityId == null) return;
+    if (token == null || token.trim().isEmpty) return;
 
     try {
       await FirebaseFirestore.instance
@@ -127,6 +131,7 @@ class NotificationService {
         'fcmToken': token,
         'tokenUpdatedAt': FieldValue.serverTimestamp(),
       });
+      debugPrint('FCM token saved successfully for user: $_currentUserId');
     } catch (e) {
       // Token save failed - log but don't crash
       debugPrint('Failed to save FCM token: $e');

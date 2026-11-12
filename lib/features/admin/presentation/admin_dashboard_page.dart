@@ -41,9 +41,8 @@ class AdminDashboardPage extends StatelessWidget {
         listener: (context, state) {
           final message = state.errorMessage ?? state.actionMessage;
           if (message != null) {
-            ScaffoldMessenger.of(
-              context,
-            ).showSnackBar(SnackBar(content: Text(message)));
+            ScaffoldMessenger.of(context)
+                .showSnackBar(SnackBar(content: Text(message)));
           }
         },
         builder: (context, state) {
@@ -108,6 +107,85 @@ class AdminDashboardPage extends StatelessWidget {
                       ),
                     ),
                   ),
+                const SizedBox(height: 28),
+                Row(
+                  children: [
+                    const Expanded(
+                      child: Text(
+                        'Courses',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    FilledButton.icon(
+                      onPressed: () => _openCourseEditor(
+                        context,
+                        course: null,
+                        lecturers: state.dashboard.lecturers,
+                      ),
+                      icon: const Icon(Icons.add_rounded),
+                      label: const Text('Add course'),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                if (state.dashboard.courses.isEmpty)
+                  const Card(
+                    child: Padding(
+                      padding: EdgeInsets.all(18),
+                      child: Text(
+                        'No courses yet. Add a course and assign lecturers.',
+                      ),
+                    ),
+                  )
+                else
+                  ...state.dashboard.courses.map((course) {
+                    final lecturerNames = {
+                      for (final lecturer in state.dashboard.lecturers)
+                        lecturer.uid: lecturer.displayName,
+                    };
+                    return Card(
+                      margin: const EdgeInsets.only(bottom: 10),
+                      child: ListTile(
+                        title: Text(course.name),
+                        subtitle: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              course.lecturerIds.isEmpty
+                                  ? 'No lecturer assigned'
+                                  : course.lecturerNames(lecturerNames),
+                              style: TextStyle(
+                                color: course.lecturerIds.isEmpty
+                                    ? Colors.deepOrange.shade700
+                                    : null,
+                                fontWeight: course.lecturerIds.isEmpty
+                                    ? FontWeight.w600
+                                    : null,
+                              ),
+                            ),
+                            if (course.lecturerIds.isEmpty &&
+                                course.lecturer.trim().isNotEmpty &&
+                                course.lecturer.toLowerCase() != 'unassigned')
+                              Text('Legacy lecturer name: ${course.lecturer}'),
+                            Text(course.schedule),
+                          ],
+                        ),
+                        isThreeLine: true,
+                        trailing: IconButton(
+                          tooltip: 'Edit course and lecturer assignments',
+                          onPressed: () => _openCourseEditor(
+                            context,
+                            course: course,
+                            lecturers: state.dashboard.lecturers,
+                          ),
+                          icon: const Icon(Icons.edit_outlined),
+                        ),
+                      ),
+                    );
+                  }),
               ],
             ),
           );
@@ -115,6 +193,183 @@ class AdminDashboardPage extends StatelessWidget {
       ),
     ),
   );
+}
+
+Future<void> _openCourseEditor(
+  BuildContext context, {
+  required Course? course,
+  required List<UniversityAccount> lecturers,
+}) async {
+  final bloc = context.read<AdminBloc>();
+  final result = await showDialog<_CourseFormValue>(
+    context: context,
+    builder: (_) => _CourseEditorDialog(course: course, lecturers: lecturers),
+  );
+  if (result == null || !context.mounted) return;
+  bloc.add(
+    AdminCourseSavedRequested(
+      courseId: course?.id,
+      name: result.name,
+      schedule: result.schedule,
+      lecturerIds: result.lecturerIds,
+    ),
+  );
+}
+
+class _CourseFormValue {
+  const _CourseFormValue({
+    required this.name,
+    required this.schedule,
+    required this.lecturerIds,
+  });
+
+  final String name;
+  final String schedule;
+  final List<String> lecturerIds;
+}
+
+class _CourseEditorDialog extends StatefulWidget {
+  const _CourseEditorDialog({required this.course, required this.lecturers});
+
+  final Course? course;
+  final List<UniversityAccount> lecturers;
+
+  @override
+  State<_CourseEditorDialog> createState() => _CourseEditorDialogState();
+}
+
+class _CourseEditorDialogState extends State<_CourseEditorDialog> {
+  final _formKey = GlobalKey<FormState>();
+  late final TextEditingController _nameController;
+  late final TextEditingController _scheduleController;
+  late final Set<String> _selectedLecturerIds;
+
+  @override
+  void initState() {
+    super.initState();
+    _nameController = TextEditingController(text: widget.course?.name ?? '');
+    _scheduleController = TextEditingController(
+      text: widget.course?.schedule ?? '',
+    );
+    _selectedLecturerIds = {...?widget.course?.lecturerIds};
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _scheduleController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final activeIds = widget.lecturers.map((lecturer) => lecturer.uid).toSet();
+    final inactiveIds = _selectedLecturerIds.difference(activeIds).toList()
+      ..sort();
+    return AlertDialog(
+      title: Text(widget.course == null ? 'Add course' : 'Edit course'),
+      content: SizedBox(
+        width: 460,
+        child: Form(
+          key: _formKey,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                TextFormField(
+                  controller: _nameController,
+                  decoration: const InputDecoration(labelText: 'Course name'),
+                  validator: (value) => value?.trim().isEmpty == true
+                      ? 'Enter a course name.'
+                      : null,
+                ),
+                TextFormField(
+                  controller: _scheduleController,
+                  decoration: const InputDecoration(labelText: 'Schedule'),
+                ),
+                const SizedBox(height: 18),
+                const Text(
+                  'Assigned lecturers',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+                const Text('Choose up to 8 lecturers.'),
+                if (widget.lecturers.isEmpty && inactiveIds.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 12),
+                    child: Text('No active lecturers are available yet.'),
+                  ),
+                ...widget.lecturers.map(
+                  (lecturer) => CheckboxListTile(
+                    contentPadding: EdgeInsets.zero,
+                    value: _selectedLecturerIds.contains(lecturer.uid),
+                    title: Text(
+                      lecturer.displayName.isEmpty
+                          ? lecturer.email
+                          : lecturer.displayName,
+                    ),
+                    subtitle: lecturer.email.isEmpty
+                        ? null
+                        : Text(lecturer.email),
+                    onChanged:
+                        !_selectedLecturerIds.contains(lecturer.uid) &&
+                            _selectedLecturerIds.length >= 8
+                        ? null
+                        : (selected) => setState(() {
+                            if (selected == true) {
+                              _selectedLecturerIds.add(lecturer.uid);
+                            } else {
+                              _selectedLecturerIds.remove(lecturer.uid);
+                            }
+                          }),
+                  ),
+                ),
+                ...inactiveIds.map(
+                  (id) => CheckboxListTile(
+                    contentPadding: EdgeInsets.zero,
+                    value: _selectedLecturerIds.contains(id),
+                    title: const Text('Inactive lecturer — remove to save'),
+                    subtitle: Text(id),
+                    onChanged:
+                        !_selectedLecturerIds.contains(id) &&
+                            _selectedLecturerIds.length >= 8
+                        ? null
+                        : (selected) => setState(() {
+                            if (selected == true) {
+                              _selectedLecturerIds.add(id);
+                            } else {
+                              _selectedLecturerIds.remove(id);
+                            }
+                          }),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () {
+            if (!_formKey.currentState!.validate()) return;
+            Navigator.pop(
+              context,
+              _CourseFormValue(
+                name: _nameController.text.trim(),
+                schedule: _scheduleController.text.trim(),
+                lecturerIds: _selectedLecturerIds.toList(),
+              ),
+            );
+          },
+          child: Text(widget.course == null ? 'Create course' : 'Save changes'),
+        ),
+      ],
+    );
+  }
 }
 
 class _PendingAccountCard extends StatelessWidget {

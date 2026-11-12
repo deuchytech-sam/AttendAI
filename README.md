@@ -7,8 +7,8 @@ A modern Flutter application for university attendance management with biometric
 ## Features
 
 ### 🎓 **For Lecturers**
-- **Course Management** — Create and manage courses with schedules and venues
-- **Student Enrollment** — Add students to courses with matric numbers
+- **Assigned Courses** — View courses assigned by a school admin
+- **Automatic Class Lists** — See roster students enrolled in assigned courses
 - **Live Attendance Sessions** — Open/close attendance sessions per course
 - **Real-time Monitoring** — Watch student check-ins as they happen
 - **Attendance Reports** — Visual dashboards with per-course statistics
@@ -27,7 +27,8 @@ A modern Flutter application for university attendance management with biometric
 
 ### 🛠 **Admin Features**
 - **Account Approval** — Review and approve university account requests
-- **System Monitoring** — Overview of all universities, lecturers, and students
+- **Course Management** — Create and edit courses, schedules, and multiple lecturer assignments
+- **Lecturer Assignment** — Select active lecturer accounts; unassigned courses are flagged for follow-up
 
 ---
 
@@ -116,7 +117,7 @@ flutter run
 
 ### Firebase Functions
 
-Deploy the callable functions used for biometric session management:
+Install and deploy the callable functions used for check-in and attendance management:
 
 ```bash
 cd functions
@@ -124,11 +125,7 @@ npm install
 firebase deploy --only functions
 ```
 
-Required functions:
-- `createFaceTecEnrollment` — Issues short-lived enrollment session token
-- `completeFaceTecEnrollment` — Finalizes enrollment, stores template
-- `createFaceTecAttendanceVerification` — Issues verification session token
-- `completeFaceTecAttendanceVerification` — Records attendance on success
+The functions validate course assignment before lecturers manage sessions, read class attendance, view semester summaries, or reset a student's face enrollment. Attendance records keep their course and session IDs for historical access.
 
 ---
 
@@ -166,17 +163,64 @@ Customize colors in `lib/app/theme/app_theme.dart` — the default uses a teal p
 ## Usage
 
 ### Lecturer Workflow
-1. Sign in → **Overview** shows today's attendance rate
-2. Tap **Manage sessions** → Open a course session
-3. Students check in via face verification
-4. View real-time check-ins on **Attendance** tab
-5. Review reports on **Reports** tab
+1. A school admin assigns one or more lecturers to each course.
+2. Sign in → **Courses** lists only your assigned courses.
+3. Open a course's attendance session.
+4. Students enrolled in that course check in via face verification; the roster appears automatically.
+5. View real-time check-ins on **Attendance** and review reports on **Reports**.
+
+Lecturers cannot create courses or manually add roster students. Course assignments and enrolments are managed through the admin and existing student-enrolment flows.
 
 ### Student Workflow
 1. Sign in → **Overview** shows enrolled courses
 2. Tap **Attendance** → Enroll face (one-time)
 3. When lecturer opens session, tap **Verify Face & Check In**
 4. View history on **Attendance** and **Reports** tabs
+
+### Admin Course Assignment
+
+1. Sign in with a university admin account and open **Courses**.
+2. Create a course or edit an existing one.
+3. Select up to eight active lecturer accounts and save. Only admins can change course lecturer assignments; Firestore Rules validate the assignments.
+4. Courses without an assigned lecturer are marked **No lecturer assigned** so an admin can fix them later.
+
+### Existing Course Migration
+
+Legacy courses may store a lecturer name in the free-text `lecturer` field. The migration matches that name to active lecturer accounts using case- and whitespace-insensitive matching. It skips courses that already have a non-empty `lecturerIds` field and reports unmatched or ambiguous names without guessing.
+
+Run from `admin_tools` with Node.js and Application Default Credentials configured for the intended Firebase project:
+
+```bash
+cd admin_tools
+npm install
+
+# Read-only preview; inspect the JSON report before applying
+npm run migrate:course-lecturers -- --dry-run
+
+# Apply only after reviewing the preview
+npm run migrate:course-lecturers -- --apply
+```
+
+Set `GCLOUD_PROJECT` to the target project if it is not `attendai-ec4cd`. To save the dry-run report, pipe the command output to a file. Run the migration before deploying the new Firestore Rules so existing lecturers keep access to their courses.
+
+The roster and membership enrolment fields remain separate: a roster row has one `courseId`, while a student's university membership can list several `courseIds`. A student taking multiple courses can have a separate roster row per course, but the current account-approval linking step links a matching matric number to only one roster row. This limitation is not automatically repaired by the lecturer-assignment migration.
+
+### Firestore Rules and Emulator Tests
+
+Deploy the assignment and attendance access rules, plus the updated callable-function checks, from the project root:
+
+```bash
+firebase deploy --only firestore:rules,functions
+```
+
+Run the assignment and migration tests with the Firestore Emulator from `admin_tools`:
+
+```bash
+npm run test:rules
+npm run test:migration
+```
+
+Lecturer session and attendance-record access checks the course's current `lecturerIds`. This keeps reassignment effective immediately and leaves historical records attached to their course/session IDs; each rule check incurs a course-document lookup.
 
 ---
 

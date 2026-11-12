@@ -108,7 +108,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     AuthSignInSubmitted event,
     Emitter<AuthState> emit,
   ) async {
-    emit(const AuthState(status: AuthStatus.loading));
+    emit(const AuthState(status: AuthStatus.submitting));
     try {
       await _signIn(email: event.email, password: event.password);
       emit(_stateFor(await _getCurrentAccount()));
@@ -123,7 +123,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     AuthRegistrationSubmitted event,
     Emitter<AuthState> emit,
   ) async {
-    emit(const AuthState(status: AuthStatus.loading));
+    emit(const AuthState(status: AuthStatus.submitting));
     try {
       await _register(
         email: event.email,
