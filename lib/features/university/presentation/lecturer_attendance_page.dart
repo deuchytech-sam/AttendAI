@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:intl/intl.dart';
-import 'package:universal_html/html.dart' as html;
+import 'package:archive/archive.dart';
 
 import 'university_bloc.dart';
 import 'university_event.dart';
@@ -9,6 +9,7 @@ import 'university_state.dart';
 import '../data/datasources/firestore_university_data_source.dart';
 import '../../../app/theme/app_theme.dart';
 import '../domain/entities/course.dart';
+import '../../../core/utils/file_download.dart';
 
 /// Lecturer attendance page with real-time session attendance,
 /// semester summary, and CSV export capabilities.
@@ -43,8 +44,11 @@ class _LecturerAttendancePageState extends State<LecturerAttendancePage>
   Widget build(BuildContext context) {
     return BlocBuilder<UniversityBloc, UniversityState>(
       builder: (context, state) {
-        final courses = state.courses.where((c) => c.lecturer.isNotEmpty).toList();
-        final isLoading = state.isLoadingSessionAttendance || state.isLoadingSemesterSummary;
+        final courses = state.courses
+            .where((c) => c.lecturer.isNotEmpty)
+            .toList();
+        final isLoading =
+            state.isLoadingSessionAttendance || state.isLoadingSemesterSummary;
 
         return Scaffold(
           appBar: AppBar(
@@ -83,6 +87,7 @@ class _LecturerAttendancePageState extends State<LecturerAttendancePage>
                       sessionId: _selectedSessionId,
                       state: state,
                       onExportCsv: _exportSessionCsv,
+                      onExportXlsx: _exportSessionXlsx,
                       isLoading: isLoading,
                     ),
                     _SemesterSummaryTab(
@@ -98,6 +103,7 @@ class _LecturerAttendancePageState extends State<LecturerAttendancePage>
                         _loadSemesterSummary(context);
                       },
                       onExportCsv: _exportSemesterCsv,
+                      onExportXlsx: _exportSemesterXlsx,
                       isLoading: isLoading,
                     ),
                   ],
@@ -117,70 +123,321 @@ class _LecturerAttendancePageState extends State<LecturerAttendancePage>
   }
 
   void _loadSemesterSummary(BuildContext context) {
-    if (_selectedCourseId == null) return;
-    context.read<UniversityBloc>().add(SemesterAttendanceSummaryRequested(
-          courseId: _selectedCourseId!,
-          semesterStart: _semesterStart,
-          semesterEnd: _semesterEnd,
-        ));
+    final courseId = _selectedCourseId?.trim();
+    if (courseId == null || courseId.isEmpty) return;
+    context.read<UniversityBloc>().add(
+      SemesterAttendanceSummaryRequested(
+        courseId: courseId,
+        semesterStart: _semesterStart,
+        semesterEnd: _semesterEnd,
+      ),
+    );
   }
 
-  void _exportSessionCsv(SessionAttendance attendance) {
+  Future<void> _exportSessionCsv(SessionAttendance attendance) async {
     final csv = _generateSessionCsv(attendance);
-    _downloadCsv(csv, 'session_${attendance.sessionId}_${DateFormat('yyyyMMdd').format(DateTime.now())}.csv');
+    await _downloadCsv(
+      csv,
+      'session_${attendance.sessionId}_${DateFormat('yyyyMMdd').format(DateTime.now())}.csv',
+    );
   }
 
-  void _exportSemesterCsv(SemesterAttendanceSummary summary) {
+  Future<void> _exportSemesterCsv(SemesterAttendanceSummary summary) async {
     final csv = _generateSemesterCsv(summary);
-    _downloadCsv(csv, 'semester_${summary.courseId}_${DateFormat('yyyyMMdd').format(DateTime.now())}.csv');
+    await _downloadCsv(
+      csv,
+      'semester_${summary.courseId}_${DateFormat('yyyyMMdd').format(DateTime.now())}.csv',
+    );
+  }
+
+  Future<void> _exportSessionXlsx(SessionAttendance attendance) async {
+    final rows = <List<String>>[
+      [
+        'Session ID',
+        'Course ID',
+        'Status',
+        'Opened At',
+        'Closed At',
+        'Total Students',
+        'Present',
+        'Absent',
+        'Attendance %',
+      ],
+      [
+        attendance.sessionId,
+        attendance.courseId,
+        attendance.status,
+        attendance.openedAt?.toIso8601String() ?? '',
+        attendance.closedAt?.toIso8601String() ?? '',
+        '${attendance.totalStudents}',
+        '${attendance.presentCount}',
+        '${attendance.absentCount}',
+        attendance.attendancePercentage.toStringAsFixed(1),
+      ],
+      [],
+      [
+        'Student ID',
+        'Student Name',
+        'Matric Number',
+        'Status',
+        'Checked At',
+        'Face Match Score',
+        'Provider',
+      ],
+    ];
+    for (final student in attendance.attendance) {
+      rows.add([
+        student.studentId,
+        student.studentName,
+        student.matricNumber,
+        student.status,
+        student.checkedAt?.toIso8601String() ?? '',
+        student.faceMatchScore?.toStringAsFixed(4) ?? '',
+        student.verificationProvider ?? '',
+      ]);
+    }
+    await _downloadXlsx(
+      rows,
+      'session_${attendance.sessionId}_${DateFormat('yyyyMMdd').format(DateTime.now())}.xlsx',
+    );
+  }
+
+  Future<void> _exportSemesterXlsx(SemesterAttendanceSummary summary) async {
+    final rows = <List<String>>[
+      ['Course ID', 'Semester Start', 'Semester End', 'Total Sessions'],
+      [
+        summary.courseId,
+        summary.semesterStart,
+        summary.semesterEnd,
+        '${summary.totalSessions}',
+      ],
+      [],
+      [
+        'Student ID',
+        'Student Name',
+        'Matric Number',
+        'Sessions Attended',
+        'Total Sessions',
+        'Percentage %',
+        'Recent Sessions',
+      ],
+    ];
+    for (final student in summary.studentSummaries) {
+      final recent = student.recentSessions
+          .map((s) => '${s.sessionId}(${s.checkedAt})')
+          .join('; ');
+      rows.add([
+        student.studentId,
+        student.studentName,
+        student.matricNumber,
+        '${student.sessionsAttended}',
+        '${student.totalSessions}',
+        '${student.percentage}',
+        recent,
+      ]);
+    }
+    await _downloadXlsx(
+      rows,
+      'semester_${summary.courseId}_${DateFormat('yyyyMMdd').format(DateTime.now())}.xlsx',
+    );
   }
 
   String _generateSessionCsv(SessionAttendance attendance) {
     final buffer = StringBuffer();
-    buffer.writeln('Session ID,Course ID,Status,Opened At,Closed At,Total Students,Present,Absent,Attendance %');
-    buffer.write('${attendance.sessionId},${attendance.courseId},${attendance.status},');
-    buffer.write('${attendance.openedAt?.toIso8601String() ?? ''},');
-    buffer.write('${attendance.closedAt?.toIso8601String() ?? ''},');
-    buffer.write('${attendance.totalStudents},${attendance.presentCount},${attendance.absentCount},');
-    buffer.write('${attendance.attendancePercentage.toStringAsFixed(1)}');
-    buffer.writeln();
+    buffer.writeln(
+      _csvRow([
+        'Session ID',
+        'Course ID',
+        'Status',
+        'Opened At',
+        'Closed At',
+        'Total Students',
+        'Present',
+        'Absent',
+        'Attendance %',
+      ]),
+    );
+    buffer.writeln(
+      _csvRow([
+        attendance.sessionId,
+        attendance.courseId,
+        attendance.status,
+        attendance.openedAt?.toIso8601String() ?? '',
+        attendance.closedAt?.toIso8601String() ?? '',
+        '${attendance.totalStudents}',
+        '${attendance.presentCount}',
+        '${attendance.absentCount}',
+        attendance.attendancePercentage.toStringAsFixed(1),
+      ]),
+    );
 
     buffer.writeln();
-    buffer.writeln('Student ID,Student Name,Matric Number,Status,Checked At,Face Match Score,Provider');
+    buffer.writeln(
+      _csvRow([
+        'Student ID',
+        'Student Name',
+        'Matric Number',
+        'Status',
+        'Checked At',
+        'Face Match Score',
+        'Provider',
+      ]),
+    );
     for (final student in attendance.attendance) {
-      buffer.write('${student.studentId},${student.studentName},${student.matricNumber},');
-      buffer.write('${student.status},');
-      buffer.write('${student.checkedAt?.toIso8601String() ?? ''},');
-      buffer.write('${student.faceMatchScore?.toStringAsFixed(4) ?? ''},');
-      buffer.write('${student.verificationProvider ?? ''}');
-      buffer.writeln();
+      buffer.writeln(
+        _csvRow([
+          student.studentId,
+          student.studentName,
+          student.matricNumber,
+          student.status,
+          student.checkedAt?.toIso8601String() ?? '',
+          student.faceMatchScore?.toStringAsFixed(4) ?? '',
+          student.verificationProvider ?? '',
+        ]),
+      );
     }
     return buffer.toString();
   }
 
   String _generateSemesterCsv(SemesterAttendanceSummary summary) {
     final buffer = StringBuffer();
-    buffer.writeln('Course ID,Semester Start,Semester End,Total Sessions');
-    buffer.writeln('${summary.courseId},${summary.semesterStart},${summary.semesterEnd},${summary.totalSessions}');
+    buffer.writeln(
+      _csvRow([
+        'Course ID',
+        'Semester Start',
+        'Semester End',
+        'Total Sessions',
+      ]),
+    );
+    buffer.writeln(
+      _csvRow([
+        summary.courseId,
+        summary.semesterStart,
+        summary.semesterEnd,
+        '${summary.totalSessions}',
+      ]),
+    );
     buffer.writeln();
-    buffer.writeln('Student ID,Student Name,Matric Number,Sessions Attended,Total Sessions,Percentage %,Recent Sessions');
+    buffer.writeln(
+      _csvRow([
+        'Student ID',
+        'Student Name',
+        'Matric Number',
+        'Sessions Attended',
+        'Total Sessions',
+        'Percentage %',
+        'Recent Sessions',
+      ]),
+    );
     for (final student in summary.studentSummaries) {
-      final recent = student.recentSessions.map((s) => '${s.sessionId}(${s.checkedAt})').join('; ');
-      buffer.write('${student.studentId},${student.studentName},${student.matricNumber},');
-      buffer.write('${student.sessionsAttended},${student.totalSessions},${student.percentage},');
-      buffer.write('$recent');
-      buffer.writeln();
+      final recent = student.recentSessions
+          .map((s) => '${s.sessionId}(${s.checkedAt})')
+          .join('; ');
+      buffer.writeln(
+        _csvRow([
+          student.studentId,
+          student.studentName,
+          student.matricNumber,
+          '${student.sessionsAttended}',
+          '${student.totalSessions}',
+          '${student.percentage}',
+          recent,
+        ]),
+      );
     }
     return buffer.toString();
   }
 
-  void _downloadCsv(String csv, String filename) {
-    final blob = html.Blob([csv], 'text/csv');
-    final url = html.Url.createObjectUrlFromBlob(blob);
-    final anchor = html.AnchorElement(href: url)
-      ..setAttribute('download', filename)
-      ..click();
-    html.Url.revokeObjectUrl(url);
+  String _csvRow(List<String> values) => values
+      .map((value) {
+        final escaped = value.replaceAll('"', '""');
+        return '"$escaped"';
+      })
+      .join(',');
+
+  Future<void> _downloadCsv(String csv, String filename) async {
+    try {
+      await downloadCsv(filename, csv);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Could not export CSV: $error')));
+    }
+  }
+
+  Future<void> _downloadXlsx(List<List<String>> rows, String filename) async {
+    final archive = Archive()
+      ..addFile(
+        ArchiveFile.string(
+          '[Content_Types].xml',
+          '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>''',
+        ),
+      )
+      ..addFile(
+        ArchiveFile.string(
+          '_rels/.rels',
+          '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>''',
+        ),
+      )
+      ..addFile(
+        ArchiveFile.string(
+          'xl/workbook.xml',
+          '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Attendance" sheetId="1" r:id="rId1"/></sheets></workbook>''',
+        ),
+      )
+      ..addFile(
+        ArchiveFile.string(
+          'xl/_rels/workbook.xml.rels',
+          '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>''',
+        ),
+      )
+      ..addFile(
+        ArchiveFile.string('xl/worksheets/sheet1.xml', _worksheetXml(rows)),
+      );
+    final bytes = ZipEncoder().encode(archive);
+    try {
+      await downloadBytes(
+        filename,
+        bytes,
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Could not export XLSX: $error')));
+    }
+  }
+
+  String _worksheetXml(List<List<String>> rows) {
+    String columnName(int index) {
+      var value = index + 1;
+      var name = '';
+      while (value > 0) {
+        final remainder = (value - 1) % 26;
+        name = String.fromCharCode(65 + remainder) + name;
+        value = (value - 1) ~/ 26;
+      }
+      return name;
+    }
+
+    final xmlRows = <String>[];
+    for (var r = 0; r < rows.length; r++) {
+      final cells = <String>[];
+      for (var c = 0; c < rows[r].length; c++) {
+        final value = rows[r][c]
+            .replaceAll('&', '&amp;')
+            .replaceAll('<', '&lt;')
+            .replaceAll('>', '&gt;')
+            .replaceAll('"', '&quot;');
+        cells.add(
+          '<c r="${columnName(c)}${r + 1}" t="inlineStr"><is><t xml:space="preserve">$value</t></is></c>',
+        );
+      }
+      xmlRows.add('<row r="${r + 1}">${cells.join()}</row>');
+    }
+    return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${xmlRows.join()}</sheetData></worksheet>';
   }
 }
 
@@ -201,7 +458,9 @@ class _CourseSelector extends StatelessWidget {
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Theme.of(context).cardColor,
-        border: Border(bottom: BorderSide(color: Colors.grey.withValues(alpha: 0.15))),
+        border: Border(
+          bottom: BorderSide(color: Colors.grey.withValues(alpha: 0.15)),
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -221,10 +480,14 @@ class _CourseSelector extends StatelessWidget {
               border: OutlineInputBorder(),
               contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             ),
-            items: courses.map((course) => DropdownMenuItem<String>(
-              value: course.id,
-              child: Text(course.name, overflow: TextOverflow.ellipsis),
-            )).toList(),
+            items: courses
+                .map(
+                  (course) => DropdownMenuItem<String>(
+                    value: course.id,
+                    child: Text(course.name, overflow: TextOverflow.ellipsis),
+                  ),
+                )
+                .toList(),
             onChanged: onChanged,
             hint: const Text('Choose a course...'),
           ),
@@ -240,6 +503,7 @@ class _LiveSessionTab extends StatelessWidget {
     required this.sessionId,
     required this.state,
     required this.onExportCsv,
+    required this.onExportXlsx,
     required this.isLoading,
   });
 
@@ -247,6 +511,7 @@ class _LiveSessionTab extends StatelessWidget {
   final String? sessionId;
   final UniversityState state;
   final void Function(SessionAttendance) onExportCsv;
+  final void Function(SessionAttendance) onExportXlsx;
   final bool isLoading;
 
   @override
@@ -280,27 +545,40 @@ class _LiveSessionTab extends StatelessWidget {
     return RefreshIndicator(
       onRefresh: () async {
         // Stream automatically updates, but we can trigger a reload
-        context.read<UniversityBloc>().add(SessionAttendanceRequested(attendance.sessionId));
+        context.read<UniversityBloc>().add(
+          SessionAttendanceRequested(attendance.sessionId),
+        );
       },
       child: CustomScrollView(
         slivers: [
           SliverToBoxAdapter(
-            child: _SessionHeader(attendance: attendance, onExport: () => onExportCsv(attendance)),
+            child: _SessionHeader(
+              attendance: attendance,
+              onExportCsv: () => onExportCsv(attendance),
+              onExportXlsx: () => onExportXlsx(attendance),
+            ),
           ),
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
               child: Text(
                 'Present (${attendance.presentCount})',
-                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ),
           ),
           SliverList.separated(
-            itemCount: attendance.attendance.where((a) => a.status == 'present').length,
+            itemCount: attendance.attendance
+                .where((a) => a.status == 'present')
+                .length,
             separatorBuilder: (_, __) => const SizedBox(height: 8),
             itemBuilder: (context, index) {
-              final presentStudents = attendance.attendance.where((a) => a.status == 'present').toList();
+              final presentStudents = attendance.attendance
+                  .where((a) => a.status == 'present')
+                  .toList();
               final student = presentStudents[index];
               return _StudentAttendanceTile(student: student, isPresent: true);
             },
@@ -310,15 +588,22 @@ class _LiveSessionTab extends StatelessWidget {
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
               child: Text(
                 'Absent (${attendance.absentCount})',
-                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ),
           ),
           SliverList.separated(
-            itemCount: attendance.attendance.where((a) => a.status == 'absent').length,
+            itemCount: attendance.attendance
+                .where((a) => a.status == 'absent')
+                .length,
             separatorBuilder: (_, __) => const SizedBox(height: 8),
             itemBuilder: (context, index) {
-              final absentStudents = attendance.attendance.where((a) => a.status == 'absent').toList();
+              final absentStudents = attendance.attendance
+                  .where((a) => a.status == 'absent')
+                  .toList();
               final student = absentStudents[index];
               return _StudentAttendanceTile(student: student, isPresent: false);
             },
@@ -338,6 +623,7 @@ class _SemesterSummaryTab extends StatelessWidget {
     required this.state,
     required this.onDateRangeChanged,
     required this.onExportCsv,
+    required this.onExportXlsx,
     required this.isLoading,
   });
 
@@ -347,15 +633,33 @@ class _SemesterSummaryTab extends StatelessWidget {
   final UniversityState state;
   final void Function(DateTime, DateTime) onDateRangeChanged;
   final void Function(SemesterAttendanceSummary) onExportCsv;
+  final void Function(SemesterAttendanceSummary) onExportXlsx;
   final bool isLoading;
 
   @override
   Widget build(BuildContext context) {
-    if (courseId == null) {
+    final selectedCourseId = courseId;
+    if (selectedCourseId == null || selectedCourseId.trim().isEmpty) {
       return _EmptyState(
         icon: Icons.menu_book_outlined,
         title: 'Select a course',
-        message: 'Choose a course from the dropdown to view semester summary.',
+        message: 'Select a course first to load its semester summary.',
+      );
+    }
+
+    if (state.semesterSummaryError != null) {
+      return _EmptyState(
+        icon: Icons.error_outline_rounded,
+        title: 'Semester summary unavailable',
+        message: state.semesterSummaryError!,
+        actionLabel:
+            state.semesterSummaryError!.contains('missing its university ID')
+            ? null
+            : 'Try Again',
+        onAction:
+            state.semesterSummaryError!.contains('missing its university ID')
+            ? null
+            : () => onDateRangeChanged(semesterStart, semesterEnd),
       );
     }
 
@@ -395,7 +699,8 @@ class _SemesterSummaryTab extends StatelessWidget {
               semesterStart: semesterStart,
               semesterEnd: semesterEnd,
               onDateRangeChanged: onDateRangeChanged,
-              onExport: () => onExportCsv(summary),
+              onExportCsv: () => onExportCsv(summary),
+              onExportXlsx: () => onExportXlsx(summary),
             ),
           ),
           SliverToBoxAdapter(
@@ -403,7 +708,10 @@ class _SemesterSummaryTab extends StatelessWidget {
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
               child: Text(
                 'Student Attendance (${summary.studentSummaries.length})',
-                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ),
           ),
@@ -425,11 +733,13 @@ class _SemesterSummaryTab extends StatelessWidget {
 class _SessionHeader extends StatelessWidget {
   const _SessionHeader({
     required this.attendance,
-    required this.onExport,
+    required this.onExportCsv,
+    required this.onExportXlsx,
   });
 
   final SessionAttendance attendance;
-  final VoidCallback onExport;
+  final VoidCallback onExportCsv;
+  final VoidCallback onExportXlsx;
 
   @override
   Widget build(BuildContext context) {
@@ -471,7 +781,9 @@ class _SessionHeader extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      attendance.status == 'open' ? 'Session Active' : 'Session Ended',
+                      attendance.status == 'open'
+                          ? 'Session Active'
+                          : 'Session Ended',
                       style: TextStyle(
                         fontSize: 20,
                         fontWeight: FontWeight.w800,
@@ -533,23 +845,32 @@ class _SessionHeader extends StatelessWidget {
               Expanded(
                 child: _StatBox(
                   label: 'Rate',
-                  value: '${attendance.attendancePercentage.toStringAsFixed(1)}%',
+                  value:
+                      '${attendance.attendancePercentage.toStringAsFixed(1)}%',
                   color: AppTheme.teal,
                 ),
               ),
             ],
           ),
           const SizedBox(height: 16),
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton.icon(
-              onPressed: onExport,
-              icon: const Icon(Icons.download_rounded, size: 18),
-              label: const Text('Export CSV'),
-              style: OutlinedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(vertical: 12),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: onExportCsv,
+                  icon: const Icon(Icons.download_rounded, size: 18),
+                  label: const Text('Export CSV'),
+                ),
               ),
-            ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: onExportXlsx,
+                  icon: const Icon(Icons.download_rounded, size: 18),
+                  label: const Text('Export XLSX'),
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -563,14 +884,16 @@ class _SemesterHeader extends StatelessWidget {
     required this.semesterStart,
     required this.semesterEnd,
     required this.onDateRangeChanged,
-    required this.onExport,
+    required this.onExportCsv,
+    required this.onExportXlsx,
   });
 
   final SemesterAttendanceSummary summary;
   final DateTime semesterStart;
   final DateTime semesterEnd;
   final void Function(DateTime, DateTime) onDateRangeChanged;
-  final VoidCallback onExport;
+  final VoidCallback onExportCsv;
+  final VoidCallback onExportXlsx;
 
   @override
   Widget build(BuildContext context) {
@@ -591,7 +914,11 @@ class _SemesterHeader extends StatelessWidget {
         children: [
           Row(
             children: [
-              const Icon(Icons.bar_chart_rounded, color: Color(0xFF1565C0), size: 32),
+              const Icon(
+                Icons.bar_chart_rounded,
+                color: Color(0xFF1565C0),
+                size: 32,
+              ),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
@@ -656,16 +983,24 @@ class _SemesterHeader extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 16),
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton.icon(
-              onPressed: onExport,
-              icon: const Icon(Icons.download_rounded, size: 18),
-              label: const Text('Export CSV'),
-              style: OutlinedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(vertical: 12),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: onExportCsv,
+                  icon: const Icon(Icons.download_rounded, size: 18),
+                  label: const Text('Export CSV'),
+                ),
               ),
-            ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: onExportXlsx,
+                  icon: const Icon(Icons.download_rounded, size: 18),
+                  label: const Text('Export XLSX'),
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -701,16 +1036,27 @@ class _DatePickerField extends StatelessWidget {
           children: [
             Text(
               label,
-              style: TextStyle(fontSize: 11, color: Colors.grey.shade600, fontWeight: FontWeight.w600),
+              style: TextStyle(
+                fontSize: 11,
+                color: Colors.grey.shade600,
+                fontWeight: FontWeight.w600,
+              ),
             ),
             const SizedBox(height: 4),
             Row(
               children: [
-                const Icon(Icons.calendar_today_rounded, size: 16, color: Color(0xFF1E88E5)),
+                const Icon(
+                  Icons.calendar_today_rounded,
+                  size: 16,
+                  color: Color(0xFF1E88E5),
+                ),
                 const SizedBox(width: 8),
                 Text(
                   DateFormat('MMM d, yyyy').format(date),
-                  style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 14,
+                  ),
                 ),
               ],
             ),
@@ -745,11 +1091,19 @@ class _StatBox extends StatelessWidget {
         children: [
           Text(
             value,
-            style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: color),
+            style: TextStyle(
+              fontSize: 22,
+              fontWeight: FontWeight.w800,
+              color: color,
+            ),
           ),
           Text(
             label,
-            style: TextStyle(fontSize: 11, color: color.withValues(alpha: 0.8), fontWeight: FontWeight.w600),
+            style: TextStyle(
+              fontSize: 11,
+              color: color.withValues(alpha: 0.8),
+              fontWeight: FontWeight.w600,
+            ),
           ),
         ],
       ),
@@ -803,7 +1157,10 @@ class _StudentAttendanceTile extends StatelessWidget {
               children: [
                 Text(
                   student.studentName,
-                  style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 15,
+                  ),
                 ),
                 const SizedBox(height: 2),
                 Text(
@@ -829,7 +1186,9 @@ class _StudentAttendanceTile extends StatelessWidget {
                   style: TextStyle(
                     fontWeight: FontWeight.w700,
                     fontSize: 14,
-                    color: student.faceMatchScore! >= 0.8 ? Colors.green : Colors.orange,
+                    color: student.faceMatchScore! >= 0.8
+                        ? Colors.green
+                        : Colors.orange,
                   ),
                 ),
                 Text(
@@ -854,8 +1213,8 @@ class _StudentSemesterTile extends StatelessWidget {
     final percentageColor = student.percentage >= 75
         ? Colors.green
         : student.percentage >= 50
-            ? Colors.orange
-            : Colors.red;
+        ? Colors.orange
+        : Colors.red;
 
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16),
@@ -883,7 +1242,10 @@ class _StudentSemesterTile extends StatelessWidget {
               children: [
                 Text(
                   student.studentName,
-                  style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 15,
+                  ),
                 ),
                 const SizedBox(height: 2),
                 Text(
@@ -895,11 +1257,17 @@ class _StudentSemesterTile extends StatelessWidget {
                   children: [
                     Text(
                       '${student.sessionsAttended}/${student.totalSessions} sessions',
-                      style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey.shade600,
+                      ),
                     ),
                     const SizedBox(width: 12),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 2,
+                      ),
                       decoration: BoxDecoration(
                         color: percentageColor.withValues(alpha: 0.1),
                         borderRadius: BorderRadius.circular(8),

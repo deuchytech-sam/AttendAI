@@ -21,6 +21,7 @@ class UniversityState extends Equatable {
     // Lecturer attendance
     this.currentSessionAttendance,
     this.semesterAttendanceSummary,
+    this.semesterSummaryError,
     this.isLoadingSessionAttendance = false,
     this.isLoadingSemesterSummary = false,
     // Student attendance history
@@ -40,6 +41,7 @@ class UniversityState extends Equatable {
   // Lecturer attendance state
   final SessionAttendance? currentSessionAttendance;
   final SemesterAttendanceSummary? semesterAttendanceSummary;
+  final String? semesterSummaryError;
   final bool isLoadingSessionAttendance;
   final bool isLoadingSemesterSummary;
 
@@ -71,6 +73,8 @@ class UniversityState extends Equatable {
     String? actionMessage,
     SessionAttendance? currentSessionAttendance,
     SemesterAttendanceSummary? semesterAttendanceSummary,
+    String? semesterSummaryError,
+    bool clearSemesterSummaryError = false,
     bool? isLoadingSessionAttendance,
     bool? isLoadingSemesterSummary,
     StudentAttendanceHistory? studentAttendanceHistory,
@@ -84,12 +88,21 @@ class UniversityState extends Equatable {
     openSessionId: openSessionId ?? this.openSessionId,
     errorMessage: errorMessage ?? this.errorMessage,
     actionMessage: actionMessage ?? this.actionMessage,
-    currentSessionAttendance: currentSessionAttendance ?? this.currentSessionAttendance,
-    semesterAttendanceSummary: semesterAttendanceSummary ?? this.semesterAttendanceSummary,
-    isLoadingSessionAttendance: isLoadingSessionAttendance ?? this.isLoadingSessionAttendance,
-    isLoadingSemesterSummary: isLoadingSemesterSummary ?? this.isLoadingSemesterSummary,
-    studentAttendanceHistory: studentAttendanceHistory ?? this.studentAttendanceHistory,
-    isLoadingStudentHistory: isLoadingStudentHistory ?? this.isLoadingStudentHistory,
+    currentSessionAttendance:
+        currentSessionAttendance ?? this.currentSessionAttendance,
+    semesterAttendanceSummary:
+        semesterAttendanceSummary ?? this.semesterAttendanceSummary,
+    semesterSummaryError: clearSemesterSummaryError
+        ? null
+        : semesterSummaryError ?? this.semesterSummaryError,
+    isLoadingSessionAttendance:
+        isLoadingSessionAttendance ?? this.isLoadingSessionAttendance,
+    isLoadingSemesterSummary:
+        isLoadingSemesterSummary ?? this.isLoadingSemesterSummary,
+    studentAttendanceHistory:
+        studentAttendanceHistory ?? this.studentAttendanceHistory,
+    isLoadingStudentHistory:
+        isLoadingStudentHistory ?? this.isLoadingStudentHistory,
   );
 
   int presentFor(String courseId) =>
@@ -110,6 +123,7 @@ class UniversityState extends Equatable {
     actionMessage,
     currentSessionAttendance,
     semesterAttendanceSummary,
+    semesterSummaryError,
     isLoadingSessionAttendance,
     isLoadingSemesterSummary,
     studentAttendanceHistory,

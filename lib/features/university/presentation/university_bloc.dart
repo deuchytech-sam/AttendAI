@@ -241,10 +241,36 @@ class UniversityBloc extends Bloc<UniversityEvent, UniversityState> {
     SemesterAttendanceSummaryRequested event,
     Emitter<UniversityState> emit,
   ) async {
-    emit(state.copyWith(isLoadingSemesterSummary: true));
+    final courseId = event.courseId.trim();
+    if (courseId.isEmpty) {
+      emit(
+        state.copyWith(
+          isLoadingSemesterSummary: false,
+          semesterSummaryError: 'Select a course before loading its summary.',
+        ),
+      );
+      return;
+    }
+
+    if (_dataSource.universityId.isEmpty) {
+      emit(
+        state.copyWith(
+          isLoadingSemesterSummary: false,
+          semesterSummaryError: 'Your lecturer profile is missing its university ID. Sign in again or contact your university administrator.',
+        ),
+      );
+      return;
+    }
+
+    emit(
+      state.copyWith(
+        isLoadingSemesterSummary: true,
+        clearSemesterSummaryError: true,
+      ),
+    );
     try {
       final summary = await _dataSource.getSemesterAttendanceSummary(
-        courseId: event.courseId,
+        courseId: courseId,
         semesterStart: event.semesterStart,
         semesterEnd: event.semesterEnd,
       );
@@ -253,10 +279,24 @@ class UniversityBloc extends Bloc<UniversityEvent, UniversityState> {
       emit(
         state.copyWith(
           isLoadingSemesterSummary: false,
-          errorMessage: 'Failed to load semester summary: $error',
+          semesterSummaryError: _semesterSummaryErrorMessage(error),
         ),
       );
     }
+  }
+
+  String _semesterSummaryErrorMessage(Object error) {
+    if (error is FirebaseFunctionsException) {
+      return switch (error.code) {
+        'unauthenticated' =>
+          'Your session expired. Sign in again to load the summary.',
+        'permission-denied' =>
+          'You do not have permission to view this course summary.',
+        'invalid-argument' => 'The university or course information is incomplete. Check your lecturer profile and select a course.',
+        _ => 'Could not load the semester summary. Check your connection and try again.',
+      };
+    }
+    return 'Could not load the semester summary. Check your connection and try again.';
   }
 
   Future<void> _onSemesterAttendanceSummaryLoaded(

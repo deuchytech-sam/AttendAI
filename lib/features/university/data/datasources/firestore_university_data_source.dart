@@ -40,6 +40,9 @@ class FirestoreUniversityDataSource {
   /// The current user's UID.
   String get userId => _account.uid;
 
+  /// The university ID loaded from the current user's profile.
+  String get universityId => _account.universityId.trim();
+
   CollectionReference<Map<String, dynamic>> _collection(String name) =>
       _firestore
           .collection('universities')
@@ -426,6 +429,7 @@ class FirestoreUniversityDataSource {
     final callable = functions.httpsCallable('getSemesterAttendanceSummary');
 
     final result = await callable.call({
+      'universityId': universityId,
       'courseId': courseId,
       'semesterStart': semesterStart.toIso8601String(),
       'semesterEnd': semesterEnd.toIso8601String(),

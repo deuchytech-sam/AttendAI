@@ -1,329 +1,191 @@
-﻿# AttendAI University
+# AttendAI University
 
-A modern Flutter application for university attendance management with biometric face verification. Built for lecturers and students to streamline attendance tracking through secure, privacy-preserving face recognition.
+AttendAI is a Flutter attendance app for university students, lecturers, and administrators. It combines course enrollment, lecturer-managed attendance sessions, face liveness checks, and Firebase-backed attendance records.
 
----
+## What the app does
 
-## Features
+### Students
 
-### 🎓 **For Lecturers**
-- **Assigned Courses** — View courses assigned by a school admin
-- **Automatic Class Lists** — See roster students enrolled in assigned courses
-- **Live Attendance Sessions** — Open/close attendance sessions per course
-- **Real-time Monitoring** — Watch student check-ins as they happen
-- **Attendance Reports** — Visual dashboards with per-course statistics
+- View enrolled courses and schedules.
+- Enroll a face and check in to an open course session with the liveness flow.
+- Review personal attendance history and reports.
+- Receive session notifications where Firebase Cloud Messaging and local notifications are configured.
 
-### 👨‍🎓 **For Students**
-- **Course Dashboard** — View enrolled courses and schedules
-- **Biometric Check-in** — Verify identity with face liveness detection
-- **Attendance History** — Track personal check-in records
-- **Profile Management** — View matric number and course details
+### Lecturers
 
-### 🔐 **Security & Privacy**
-- **Face Liveness Verification** — Prevents spoofing with iProov/FaceTec SDK
-- **On-device Processing** — Biometric data never leaves the device unencrypted
-- **Firebase App Check** — Protects backend resources from abuse
-- **Role-based Access** — Separate interfaces for lecturers, students, and admins
+- View assigned courses and their student rosters.
+- Open or close a course attendance session and see check-ins update live.
+- Enroll a student's face or reset an enrollment when needed.
+- View reports and load a semester summary for a selected course and date range.
+- Export the displayed session attendance or semester summary as CSV or XLSX. Web uses a browser download; native platforms write a temporary file and invoke the platform share flow where supported.
 
-### 🛠 **Admin Features**
-- **Account Approval** — Review and approve university account requests
-- **Course Management** — Create and edit courses, schedules, and multiple lecturer assignments
-- **Lecturer Assignment** — Select active lecturer accounts; unassigned courses are flagged for follow-up
+### University administrators
 
----
+- Review and approve pending student and lecturer accounts.
+- Create and edit courses, schedules, enrollments, and lecturer assignments.
+- Assign up to eight active lecturers to a course. Courses without a lecturer are identified for follow-up.
 
-## Tech Stack
+## Technology and architecture
 
-| Layer | Technology |
-|-------|------------|
-| **Framework** | Flutter 3.24+ (Dart 3.13+) |
-| **State Management** | flutter_bloc (BLoC pattern) |
-| **Navigation** | go_router |
-| **Backend** | Firebase (Auth, Firestore, Functions, App Check) |
-| **Biometrics** | FaceTec SDK / iProov (configurable via `BiometricRepository`) |
-| **Dependency Injection** | get_it |
-| **Architecture** | Clean Architecture (Domain → Data → Presentation) |
+| Area | Implementation |
+| --- | --- |
+| App | Flutter and Dart (SDK constraint in `pubspec.yaml`) |
+| State | `flutter_bloc` BLoC pattern |
+| Navigation | `go_router` |
+| Backend | Firebase Authentication, Cloud Firestore, Cloud Functions, App Check, and Cloud Messaging |
+| Face liveness | Local `flutter_face_liveness` package, with ML Kit and TensorFlow Lite components |
+| File export | `package:web` for browser downloads; `path_provider` and `share_plus` for native file sharing |
+| Structure | Feature-oriented Clean Architecture with data, domain, and presentation layers |
 
----
+The active Flutter enrollment and check-in screens use the local liveness package. `functions/index.js` also contains FaceTec-backed callable endpoints; configuring those endpoints does not replace or configure the Flutter liveness UI.
 
-## Project Structure
+## Repository layout
 
-```
+```text
 lib/
-├── app/
-│   ├── injection_container.dart    # get_it service locator
-│   ├── theme/app_theme.dart        # Light theme with teal accent
-│   └── app.dart                    # Root widget + routing
-├── config/
-│   └── facetec_config.dart         # FaceTec SDK configuration
+├── app/                         # App widget, service wiring, theme
+├── core/utils/                  # Platform-aware CSV/XLSX file downloads
 ├── features/
-│   ├── auth/                       # Authentication (sign in, register, password reset)
-│   │   ├── data/
-│   │   ├── domain/
-│   │   └── presentation/
-│   ├── biometrics/                 # Face enrollment & verification
-│   │   ├── data/
-│   │   │   ├── repositories/       # FaceTecBiometricRepository
-│   │   │   └── services/           # FaceTecEnrollmentService, FaceTecAttendanceService
-│   │   ├── domain/
-│   │   │   ├── repositories/       # BiometricRepository (interface)
-│   │   │   └── services/           # BiometricAttendanceService (interface)
-│   │   └── presentation/           # Enrollment dialogs, verification UI
-│   ├── university/                 # Core university features
-│   │   ├── data/
-│   │   ├── domain/
-│   │   └── presentation/           # Home page, courses, attendance, reports, students
-│   └── admin/                      # Admin dashboard & account approval
-├── firebase_options.dart           # Generated by FlutterFire CLI
-└── main.dart                       # App entry point
+│   ├── auth/                    # Sign-in, registration, account approval state
+│   ├── admin/                   # Account approval and course management
+│   ├── biometrics/              # Liveness service and biometric repository
+│   ├── notifications/           # FCM and local session notifications
+│   └── university/              # Student, lecturer, attendance, and reports
+├── firebase_options.dart        # FlutterFire configuration
+└── main.dart                    # Firebase/App Check initialization
+
+packages/flutter_face_liveness/  # Local face capture, liveness, and identity package
+functions/                       # Callable and scheduled Firebase Functions
+admin_tools/                     # Admin promotion and lecturer migration tools
+firestore.rules                  # Firestore role and course access rules
 ```
 
----
+## Requirements and platform configuration
 
-## Getting Started
+- Flutter with a Dart SDK satisfying the `environment.sdk` constraint in `pubspec.yaml`.
+- A Firebase project with Email/Password Authentication, Cloud Firestore, Cloud Functions, App Check, and Cloud Messaging enabled as needed.
+- Node.js 22 for Firebase Functions.
 
-### Prerequisites
+The checked-in FlutterFire configuration currently contains Android and iOS options. Web, Windows, macOS, and Linux project folders exist, but those platforms are not configured in `lib/firebase_options.dart`. Run FlutterFire configuration for any additional platform before expecting the app to start there. Camera, ML Kit, TensorFlow Lite, App Check, notifications, and file-sharing support also vary by platform.
 
-- **Flutter SDK** 3.24+ (Dart 3.13+)
-- **Firebase Project** with:
-  - Authentication (Email/Password)
-  - Cloud Firestore
-  - Cloud Functions (for biometric session tokens)
-  - App Check (reCAPTCHA v3 / DeviceCheck)
-- **FaceTec SDK** (optional — for production biometrics)
-  - Android: `facetec.aar` in `android/app/libs/`
-  - iOS: `FaceTecSDK.xcframework` in `ios/`
-
-> **Note:** The app includes a `face_liveness_verification` package dependency as an alternative biometric provider. Switch implementations in `injection_container.dart`.
-
-### Installation
+## Getting started
 
 ```bash
-# Clone the repository
 git clone https://github.com/deuchytech-sam/AttendAI.git
 cd AttendAI
-
-# Install Flutter dependencies
 flutter pub get
-
-# Configure Firebase (run once per platform)
-flutterfire configure
-
-# For FaceTec: place SDK files in platform directories (see Prerequisites)
-
-# Run the app
 flutter run
 ```
 
-### Firebase Functions
+Configure Firebase for the target platform with the FlutterFire CLI and ensure its app identifiers match the Firebase project. Debug builds use Firebase App Check debug providers; register the generated debug token in the Firebase console. Release builds use Android Play Integrity and Apple DeviceCheck providers.
 
-Install and deploy the callable functions used for check-in and attendance management:
+New users register with a university code and request a student or lecturer role. They must verify their email and be approved by a university administrator before reaching the role-specific app.
+
+### Deploy Firestore rules and Functions
+
+From the repository root:
 
 ```bash
 cd functions
 npm install
-firebase deploy --only functions
+cd ..
+firebase deploy --only firestore:rules,functions
 ```
 
-The functions validate course assignment before lecturers manage sessions, read class attendance, view semester summaries, or reset a student's face enrollment. Attendance records keep their course and session IDs for historical access.
+Callable Functions use the `europe-west1` region and enforce App Check. They manage attendance sessions and records, lecturer course assignment checks, semester summaries, student attendance history, roster linking, and face-enrollment resets. A scheduled function expires stale attendance sessions.
 
----
+`functions/index.js` also exports FaceTec token and verification callables. If those server-side flows are used, configure the `FACETEC_API_KEY` secret and, if needed, the `FACETEC_API_BASE_URL` Functions parameter before deployment.
 
-## Configuration
+### Promote the first university administrator
 
-### Biometric Provider
+The admin promotion tool requires Application Default Credentials. The user must already have a verified Firebase Auth account, a matching `users/{uid}` profile with the university ID, and an existing university document.
 
-The app uses a repository pattern for biometrics. Switch providers in `lib/app/injection_container.dart`:
-
-```dart
-// Current: FaceTec
-BiometricRepository createBiometricRepository() {
-  return FaceTecBiometricRepository(
-    enrollmentService: FaceTecEnrollmentService(),
-    attendanceService: FaceTecAttendanceService(),
-  );
-}
-
-// Alternative: face_liveness_verification package
-// BiometricRepository createBiometricRepository() {
-//   return FaceLivenessBiometricRepository(...);
-// }
+```bash
+cd admin_tools
+npm install
+npm run promote-admin -- <firebase-auth-uid> <university-document-id>
 ```
 
-### FaceTec Config
+The admin should sign out and back in after promotion so the app receives the updated custom claims.
 
-Edit `lib/config/facetec_config.dart` with your FaceTec device key and region.
+### Migrate legacy course lecturer assignments
 
-### Theme
-
-Customize colors in `lib/app/theme/app_theme.dart` — the default uses a teal primary palette.
-
----
-
-## Usage
-
-### Lecturer Workflow
-1. A school admin assigns one or more lecturers to each course.
-2. Sign in → **Courses** lists only your assigned courses.
-3. Open a course's attendance session.
-4. Students enrolled in that course check in via face verification; the roster appears automatically.
-5. View real-time check-ins on **Attendance** and review reports on **Reports**.
-
-Lecturers cannot create courses or manually add roster students. Course assignments and enrolments are managed through the admin and existing student-enrolment flows.
-
-### Student Workflow
-1. Sign in → **Overview** shows enrolled courses
-2. Tap **Attendance** → Enroll face (one-time)
-3. When lecturer opens session, tap **Verify Face & Check In**
-4. View history on **Attendance** and **Reports** tabs
-
-### Admin Course Assignment
-
-1. Sign in with a university admin account and open **Courses**.
-2. Create a course or edit an existing one.
-3. Select up to eight active lecturer accounts and save. Only admins can change course lecturer assignments; Firestore Rules validate the assignments.
-4. Courses without an assigned lecturer are marked **No lecturer assigned** so an admin can fix them later.
-
-### Existing Course Migration
-
-Legacy courses may store a lecturer name in the free-text `lecturer` field. The migration matches that name to active lecturer accounts using case- and whitespace-insensitive matching. It skips courses that already have a non-empty `lecturerIds` field and reports unmatched or ambiguous names without guessing.
-
-Run from `admin_tools` with Node.js and Application Default Credentials configured for the intended Firebase project:
+The migration matches legacy free-text lecturer names to active lecturer accounts. It skips courses that already have a non-empty `lecturerIds` field and reports unmatched or ambiguous names without guessing.
 
 ```bash
 cd admin_tools
 npm install
 
-# Read-only preview; inspect the JSON report before applying
+# Preview and review the report first
 npm run migrate:course-lecturers -- --dry-run
 
-# Apply only after reviewing the preview
+# Apply the reviewed migration
 npm run migrate:course-lecturers -- --apply
 ```
 
-Set `GCLOUD_PROJECT` to the target project if it is not `attendai-ec4cd`. To save the dry-run report, pipe the command output to a file. Run the migration before deploying the new Firestore Rules so existing lecturers keep access to their courses.
+Set `GCLOUD_PROJECT` when targeting a Firebase project other than `attendai-ec4cd`. You can limit the migration with `--university=<university-document-id>`. Run the migration before deploying Firestore rules that depend on `lecturerIds`.
 
-The roster and membership enrolment fields remain separate: a roster row has one `courseId`, while a student's university membership can list several `courseIds`. A student taking multiple courses can have a separate roster row per course, but the current account-approval linking step links a matching matric number to only one roster row. This limitation is not automatically repaired by the lecturer-assignment migration.
+Student roster rows and university membership course IDs are separate records. A student taking multiple courses can have one roster row per course, while the current approval/linking flow links a matric number to one roster row.
 
-### Firestore Rules and Emulator Tests
+## App workflows
 
-Deploy the assignment and attendance access rules, plus the updated callable-function checks, from the project root:
+### Attendance
 
-```bash
-firebase deploy --only firestore:rules,functions
-```
+1. An administrator creates a course and assigns active lecturers.
+2. Students enroll in the course and complete email verification and account approval.
+3. A lecturer opens a session for an assigned course.
+4. An enrolled student completes the face liveness check to check in.
+5. The lecturer monitors the live session, reviews reports, or loads a semester summary.
 
-Run the assignment and migration tests with the Firestore Emulator from `admin_tools`:
+Attendance check-in is handled by Cloud Functions, which validate the student's university membership, course enrollment, and open session. Lecturers can manage only courses assigned to them.
 
-```bash
-npm run test:rules
-npm run test:migration
-```
+### Lecturer exports
 
-Lecturer session and attendance-record access checks the course's current `lecturerIds`. This keeps reassignment effective immediately and leaves historical records attached to their course/session IDs; each rule check incurs a course-document lookup.
+Open **Lecturer → Live Session** or **Lecturer → Semester Summary**, select a course, and use **Export CSV** or **Export XLSX**. CSV exports include a UTF-8 BOM for spreadsheet compatibility. On web the browser downloads the file; on native platforms the app opens the system share flow for the generated temporary file.
 
----
+### Face enrollment and data
 
-## Development
+The liveness flow uses the local `flutter_face_liveness` package. The app persists face embeddings through the university data source and loads them for enrollment and check-in flows. Do not treat the liveness UI as a substitute for Firebase authorization: callable functions and Firestore rules enforce membership and course access.
 
-### Running Tests
-
-```bash
-# Unit tests
-flutter test
-
-# Integration tests (requires device/emulator)
-flutter test integration_test/
-```
-
-### Code Style
+## Development and checks
 
 ```bash
-# Analyze
+# Install Flutter dependencies
+flutter pub get
+
+# Static analysis
 flutter analyze
 
-# Format
-dart format .
+# Dart tests
+flutter test
+
+# Admin migration tests
+cd admin_tools
+npm run test:migration
+
+# Firestore Rules and migration tests using the emulator
+npm run test:rules
 ```
 
-### Building
+Flutter build commands:
 
 ```bash
-# Android
 flutter build apk --release
 flutter build appbundle --release
-
-# iOS
 flutter build ios --release
-
-# Web
 flutter build web --release
 ```
 
----
+The web build command requires web Firebase options and compatible platform implementations to be configured first. Windows, macOS, and Linux builds likewise require Firebase and plugin setup for the target platform.
 
-## Architecture Decisions
+## Security notes
 
-| Decision | Rationale |
-|----------|-----------|
-| **BLoC + Clean Architecture** | Separates concerns, testable, scalable |
-| **Repository Pattern (Biometrics)** | Swap providers (FaceTec ↔ iProov ↔ ML Kit) without UI changes |
-| **Firebase Functions as Trust Boundary** | Biometric credentials & templates never touch client |
-| **go_router** | Declarative, type-safe navigation with deep linking |
-| **get_it** | Lightweight DI, no code generation needed |
+- Accounts are scoped by university ID and require email verification and administrator approval.
+- Firestore rules validate role membership and lecturer assignments for protected data.
+- Attendance and identity-sensitive operations use authenticated, App Check-enforced callable functions.
+- Face embeddings are stored and synchronized by the app; avoid logging, exporting, or sharing biometric data outside the intended enrollment and attendance flows.
+- Never commit service-account credentials, production secrets, or Firebase Admin SDK keys.
 
----
+## License and support
 
-## Security Considerations
-
-- **Biometric templates** are stored server-side only (via Cloud Functions)
-- **Session tokens** are short-lived and single-use
-- **App Check** attestation required for all Firebase calls
-- **Firestore rules** enforce role-based data access
-- **No face images** stored on device or in Firestore
-
----
-
-## Roadmap
-
-- [ ] Offline-first attendance with background sync
-- [ ] Multi-university support (tenant isolation)
-- [ ] NFC/QR code fallback for devices without front camera
-- [ ] Export attendance to CSV/Excel
-- [ ] Push notifications for session reminders
-- [ ] Automated enrollment reminders
-
----
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
----
-
-## License
-
-This project is proprietary software. All rights reserved.
-
----
-
-## Support
-
-For issues, feature requests, or questions:
-- Open a [GitHub Issue](https://github.com/deuchytech-sam/AttendAI/issues)
-- Contact: [deuchytech-sam](https://github.com/deuchytech-sam)
-
----
-
-## Acknowledgements
-
-- [Flutter](https://flutter.dev/) — UI framework
-- [Firebase](https://firebase.google.com/) — Backend platform
-- [FaceTec](https://www.facetec.com/) — Biometric SDK
-- [iProov](https://www.iproov.com/) — Face verification alternative
-- [flutter_bloc](https://bloclibrary.dev/) — State management
-- [go_router](https://pub.dev/packages/go_router) — Navigation
+This project is proprietary software. All rights reserved. For issues and feature requests, open a [GitHub Issue](https://github.com/deuchytech-sam/AttendAI/issues).
